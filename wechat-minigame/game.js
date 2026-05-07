@@ -74,8 +74,10 @@ const HAND_RANKS = [
   ["杠子", 110, 4],
   ["小三元", 130, 6],
   ["清一色", 150, 5],
+  ["清一色杠子", 220, 8],
   ["满堂刻", 170, 6],
   ["清一色满堂刻", 230, 8],
+  ["三元归位", 210, 8],
   ["清一色两顺", 190, 7],
 ];
 
@@ -92,8 +94,10 @@ const HAND_HELP = [
   ["杠子", "4 张完全相同。"],
   ["小三元", "中、发、白各 1 张。"],
   ["清一色", "5 张全是同一数字花色：万、筒或条。"],
+  ["清一色杠子", "5 张同一数字花色，其中 4 张完全相同。"],
   ["满堂刻", "5 张牌，三张相同 + 一对。"],
   ["清一色满堂刻", "5 张同一数字花色，同时是三张相同 + 一对。"],
+  ["三元归位", "5 张牌里含中、发、白，再加一组相同字牌。"],
   ["清一色两顺", "5 张同花色连续数字，例如 2万3万4万5万6万。"],
 ];
 
@@ -309,6 +313,21 @@ const STAGE_EVENTS = [
   { id: "lucky", text: "幸运局：首次出牌得分 ×1.5" },
 ];
 
+const DEBUG_DEAL_PRESETS = [
+  { id: "pair", name: "对子" },
+  { id: "twoPair", name: "两对" },
+  { id: "straight", name: "顺子" },
+  { id: "triplet", name: "刻子" },
+  { id: "kong", name: "杠子" },
+  { id: "fullHouse", name: "满堂刻" },
+  { id: "flush", name: "清一色" },
+  { id: "flushRun", name: "清一色两顺" },
+  { id: "flushFullHouse", name: "清一色满堂刻" },
+  { id: "flushKong", name: "清一色杠子" },
+  { id: "dragon", name: "小三元" },
+  { id: "dragonFull", name: "三元归位" },
+];
+
 const state = {
   screen: "start",
   stageIndex: 0,
@@ -352,6 +371,8 @@ const state = {
   startLane: "",
   artifactSlots: 5,
   runCount: 0,
+  debugMode: false,
+  showDealDebug: false,
   enemyFx: null,
   boughtUpgradeThisReward: false,
   pendingArtifact: null,
@@ -379,6 +400,7 @@ wx.onTouchStart((event) => {
 function startRun(startIndex = 0, debugMode = false, startBuild = START_BUILDS[0]) {
   state.screen = "game";
   state.stageIndex = startIndex;
+  state.debugMode = debugMode;
   if (!debugMode) state.runCount += 1;
   state.score = 0;
   state.coins = debugMode ? 12 : startBuild.coins;
@@ -426,6 +448,7 @@ function startRun(startIndex = 0, debugMode = false, startBuild = START_BUILDS[0
   state.adPrompt = null;
   state.adsUsed = { hand: 0, discard: 0, refresh: 0, revive: 0 };
   state.showStageSelect = false;
+  state.showDealDebug = false;
   state.startBuildChoices = [];
   state.showGuide = !debugMode;
   beginStage();
@@ -1038,7 +1061,9 @@ function evaluateTiles(tiles) {
   const ranks = tiles.map((tile) => tile.rank).sort((a, b) => a - b);
   const straight = tiles.length === 3 && sameSuit && numeric && ranks[0] + 1 === ranks[1] && ranks[1] + 1 === ranks[2];
   const run5 = tiles.length === 5 && sameSuit && numeric && new Set(ranks).size === 5 && ranks.every((r, i) => i === 0 || r === ranks[i - 1] + 1);
+  if (tiles.length === 5 && sameSuit && numeric && values[0] === 4) return { valid: true, name: "清一色杠子", base: 220, mult: 8, tags: ["flush", "triplet"] };
   if (tiles.length === 5 && sameSuit && numeric && values.join(",") === "3,2") return { valid: true, name: "清一色满堂刻", base: 230, mult: 8, tags: ["flush", "triplet", "pair"] };
+  if (tiles.length === 5 && values[0] === 4) return { valid: true, name: "杠子", base: 110, mult: 4, tags: ["triplet"] };
   if (tiles.length === 5 && values.join(",") === "3,2") return { valid: true, name: "满堂刻", base: 170, mult: 6, tags: ["triplet", "pair"] };
   if (tiles.length === 5 && sameSuit && numeric) return { valid: true, name: run5 ? "清一色两顺" : "清一色", base: run5 ? 190 : 150, mult: run5 ? 7 : 5, tags: run5 ? ["flush", "straight"] : ["flush"] };
   if (tiles.length === 4 && values[0] === 4) return { valid: true, name: "杠子", base: 110, mult: 4, tags: ["triplet"] };
@@ -1046,6 +1071,7 @@ function evaluateTiles(tiles) {
   if (straight) return { valid: true, name: "顺子", base: 58, mult: 3, tags: ["straight"] };
   if (tiles.length === 4 && values.join(",") === "2,2") return { valid: true, name: "两对", base: 66, mult: 3, tags: ["pair"] };
   if (tiles.length === 2 && values[0] === 2) return { valid: true, name: "对子", base: 34, mult: 2, tags: ["pair"] };
+  if (isDragonFullSet(tiles) && tiles.length === 5 && values[0] >= 2) return { valid: true, name: "三元归位", base: 210, mult: 8, tags: ["dragon", "pair"] };
   if (tiles.length === 3 && sameSuit && tiles[0].suit === "dragon" && new Set(tiles.map((t) => t.rank)).size === 3) return { valid: true, name: "小三元", base: 130, mult: 6, tags: ["dragon"] };
   const sameNumberCombo = evaluateSameNumberTiles(tiles);
   if (sameNumberCombo) return sameNumberCombo;
@@ -1063,6 +1089,11 @@ function evaluateSameNumberTiles(tiles) {
   if (tiles.length === 2 && suitCount === 2) return { valid: true, name: "同数对子", base: 28, mult: 1.5, tags: ["sameNumber", "loose"] };
   if (tiles.length === 3 && suitCount === 3) return { valid: true, name: "三门同数", base: 48, mult: 2, tags: ["sameNumber", "loose"] };
   return null;
+}
+
+function isDragonFullSet(tiles) {
+  if (!tiles.every((tile) => tile.suit === "dragon")) return false;
+  return new Set(tiles.map((tile) => tile.rank)).size === 3;
 }
 
 function recordComboLane(combo) {
@@ -1242,6 +1273,7 @@ function draw() {
   if (state.screen === "end") drawEnd();
   if (state.resolve && Date.now() < state.resolve.until) drawResolve();
   if (state.showStageSelect) drawStageSelect();
+  if (state.showDealDebug) drawDebugDeal();
   if (state.showGuide) drawGuide();
   if (state.showHandHelp) drawHandHelp();
   if (state.inspectedArtifact) drawArtifactDetail();
@@ -1310,6 +1342,7 @@ function drawGame() {
   if (!compact) wrapText(triggerText, 28, y + 122, W - 166, 11, COLORS.muted, 1);
   smallButton(W - 120, y + 14, 92, 34, "牌型说明", () => { state.showHandHelp = true; });
   smallButton(W - 120, y + 54, 92, 34, state.luckUsed ? "已借运" : "借运", borrowLuck);
+  if (state.debugMode) smallButton(W - 120, y + 94, 92, 24, "调试发牌", () => { state.showDealDebug = true; });
 
   drawBuildPanel(compact ? 314 : 356);
   drawArtifacts(compact ? 374 : 438);
@@ -1635,6 +1668,35 @@ function drawStageSelect() {
   button(x + 18, y + h - 52, w - 36, 38, "关闭", () => { state.showStageSelect = false; }, false);
 }
 
+function drawDebugDeal() {
+  fillRect(0, 0, W, H, "rgba(0,0,0,0.68)");
+  hit(0, 0, W, H, () => {});
+  const x = 18;
+  const y = 52;
+  const w = W - 36;
+  const h = H - 104;
+  roundRect(x, y, w, h, 10, COLORS.panel);
+  strokeRound(x, y, w, h, 10, COLORS.gold, 1.5);
+  text("调试发牌", W / 2, y + 36, 24, COLORS.text, "center", "bold");
+  text("点击后直接塞入目标牌型，方便验证判定、特效和法器联动。", W / 2, y + 60, 12, COLORS.muted, "center");
+  const cols = 2;
+  const gap = 8;
+  const cardW = (w - 36 - gap) / cols;
+  const cardH = 56;
+  const startY = y + 88;
+  DEBUG_DEAL_PRESETS.forEach((preset, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const bx = x + 18 + col * (cardW + gap);
+    const by = startY + row * (cardH + gap);
+    roundRect(bx, by, cardW, cardH, 8, COLORS.panel2);
+    strokeRound(bx, by, cardW, cardH, 8, COLORS.line);
+    text(preset.name, bx + cardW / 2, by + 33, 17, COLORS.text, "center", "bold");
+    hit(bx, by, cardW, cardH, () => debugDealPreset(preset.id));
+  });
+  button(x + 18, y + h - 52, w - 36, 38, "关闭", () => { state.showDealDebug = false; }, false);
+}
+
 function drawAdPrompt() {
   fillRect(0, 0, W, H, "rgba(0,0,0,0.66)");
   hit(0, 0, W, H, () => {});
@@ -1702,6 +1764,41 @@ function drawGuide() {
   wrapText("选 1-5 张牌都能出。打出和换掉的牌会进弃牌堆，牌山不够时会洗回，所以牌会再次出现。", x + 18, y + 82, w - 36, 15, COLORS.muted, 4);
   wrapText("第一关后选择核心法器。核心法器会在过关时改造牌山，让后续随机逐渐偏向你的构筑。", x + 18, y + 180, w - 36, 14, COLORS.gold, 3);
   button(x + 18, y + h - 62, w - 36, 44, "开始摸牌", () => { state.showGuide = false; }, true);
+}
+
+function debugDealPreset(presetId) {
+  const tiles = buildDebugPresetTiles(presetId);
+  if (!tiles.length) return toast("未生成调试手牌");
+  state.selected.clear();
+  state.discard.push(...state.hand);
+  state.hand = tiles.map(cloneTile);
+  topUpHand();
+  trimHandToLimit();
+  state.showDealDebug = false;
+  const name = DEBUG_DEAL_PRESETS.find((item) => item.id === presetId)?.name || presetId;
+  toast(`调试发牌：${name}`);
+}
+
+function buildDebugPresetTiles(presetId) {
+  const suit = sample(NUMERIC_SUITS);
+  const altSuit = suit === "wan" ? "tong" : "wan";
+  if (presetId === "pair") return makeTiles([[suit, 6], [suit, 6]]);
+  if (presetId === "twoPair") return makeTiles([[suit, 3], [suit, 3], [altSuit, 7], [altSuit, 7]]);
+  if (presetId === "straight") return makeTiles([[suit, 3], [suit, 4], [suit, 5]]);
+  if (presetId === "triplet") return makeTiles([[suit, 5], [suit, 5], [suit, 5]]);
+  if (presetId === "kong") return makeTiles([[suit, 4], [suit, 4], [suit, 4], [suit, 4]]);
+  if (presetId === "fullHouse") return makeTiles([[suit, 2], [suit, 2], [suit, 2], [altSuit, 8], [altSuit, 8]]);
+  if (presetId === "flush") return makeTiles([[suit, 1], [suit, 3], [suit, 5], [suit, 7], [suit, 9]]);
+  if (presetId === "flushRun") return makeTiles([[suit, 2], [suit, 3], [suit, 4], [suit, 5], [suit, 6]]);
+  if (presetId === "flushFullHouse") return makeTiles([[suit, 2], [suit, 2], [suit, 2], [suit, 7], [suit, 7]]);
+  if (presetId === "flushKong") return makeTiles([[suit, 4], [suit, 4], [suit, 4], [suit, 4], [suit, 8]]);
+  if (presetId === "dragon") return makeTiles([["dragon", 1], ["dragon", 2], ["dragon", 3]]);
+  if (presetId === "dragonFull") return makeTiles([["dragon", 1], ["dragon", 2], ["dragon", 3], ["dragon", 1], ["dragon", 1]]);
+  return [];
+}
+
+function makeTiles(specs) {
+  return specs.map(([tileSuit, rank]) => ({ id: uid(), suit: tileSuit, rank }));
 }
 
 function drawResolve() {
