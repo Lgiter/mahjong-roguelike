@@ -48,10 +48,10 @@ const STAGES = [
   { target: 12500, hands: 4, discards: 3, enemy: "白风客" },
   { target: 23000, hands: 4, discards: 2, enemy: "封顺魇", boss: true, rule: { id: "straightHalf", text: "Boss：顺子和两顺番数减半" } },
   { target: 42000, hands: 4, discards: 3, enemy: "金铃童子" },
-  { target: 76000, hands: 4, discards: 2, enemy: "三元使", boss: true, rule: { id: "noDragon", text: "Boss：三元牌基础点被压制" } },
-  { target: 130000, hands: 4, discards: 3, enemy: "黑风客" },
-  { target: 220000, hands: 4, discards: 2, enemy: "铁算盘", boss: true, rule: { id: "coinBleed", text: "Boss：每次出牌后金币 -2" } },
-  { target: 360000, hands: 4, discards: 2, enemy: "三元龙王", boss: true, rule: { id: "repeatTax", text: "Boss：重复上次牌型番数 -3" } },
+  { target: 68000, hands: 4, discards: 2, enemy: "三元使", boss: true, rule: { id: "noDragon", text: "Boss：三元牌基础点被压制" } },
+  { target: 115000, hands: 4, discards: 3, enemy: "黑风客" },
+  { target: 190000, hands: 4, discards: 2, enemy: "铁算盘", boss: true, rule: { id: "coinBleed", text: "Boss：每次出牌后金币 -2" } },
+  { target: 320000, hands: 4, discards: 2, enemy: "三元龙王", boss: true, rule: { id: "repeatTax", text: "Boss：重复上次牌型番数 -3" } },
 ];
 
 const CORE_ARTIFACT_IDS = ["greenDragon", "whiteTiger", "cashToFan", "looseManual", "clearMirror", "pairNeedle"];
@@ -105,8 +105,11 @@ const ARTIFACTS = [
   artifact("trialCharm", "试炼符", "初", "高牌和散牌番数 +1。", (c) => {
     if (hasTag(c, "high") || hasTag(c, "loose")) c.mult += 1;
   }, { lane: "通用" }),
-  artifact("greenDragon", "青龙印", "青", "顺子番数 +2；过关时加入中张并清理字牌。", (c) => {
-    if (hasTag(c, "straight")) c.mult += 2 + c.state.growth.straightFan;
+  artifact("greenDragon", "青龙印", "青", "顺子番数 +2；五张顺子终局额外 ×1.5；过关时加入中张并清理字牌。", (c) => {
+    if (hasTag(c, "straight")) {
+      c.mult += 2 + c.state.growth.straightFan;
+      if (isBigStraightCombo(c.combo)) c.factor *= 1.5;
+    }
   }, {
     lane: "顺子",
     afterPlay(s, combo) {
@@ -118,12 +121,15 @@ const ARTIFACTS = [
       recordDeckChange("青龙印：牌山加入 2 张中张，清理 1 张字牌");
     },
   }),
-  artifact("whiteTiger", "白虎符", "虎", "刻子系点数 +80；过关时复制对子牌。", (c) => {
-    if (hasTag(c, "triplet")) c.base += 80 + c.state.growth.tripletBase;
+  artifact("whiteTiger", "白虎符", "虎", "刻子系点数 +80；五张刻子终局额外 ×1.5；过关时复制对子牌。", (c) => {
+    if (hasTag(c, "triplet")) {
+      c.base += 80 + c.state.growth.tripletBase;
+      if (isBigTripletCombo(c.combo)) c.factor *= 1.5;
+    }
   }, {
     lane: "刻子",
     afterPlay(s, combo) {
-      if (combo.tags.includes("triplet")) s.growth.tripletBase += 35;
+      if (combo.tags.includes("triplet")) s.growth.tripletBase += isBigTripletCombo(combo) ? 80 : 50;
     },
     stageClear(s) {
       const source = findPairSource([...s.hand, ...s.deck, ...s.discard]) || sample([...s.hand, ...s.deck]);
@@ -146,8 +152,8 @@ const ARTIFACTS = [
   artifact("loopScript", "连环诀", "环", "连续打出顺子时最终得分 ×2.2。", (c, s) => {
     if (hasTag(c, "straight") && s.lastComboTags.includes("straight")) c.factor *= 2.2;
   }, { lane: "顺子" }),
-  artifact("twinHammer", "双锤令", "锤", "刻子、杠子、满堂刻最终得分 ×2。", (c) => {
-    if (hasTag(c, "triplet")) c.factor *= 2;
+  artifact("twinHammer", "双锤令", "锤", "刻子系终局重击：普通刻子 ×2，五张刻子终局 ×2.4。", (c) => {
+    if (hasTag(c, "triplet")) c.factor *= isBigTripletCombo(c.combo) ? 2.4 : 2;
   }, { lane: "刻子" }),
   artifact("goldVault", "聚宝匣", "宝", "过关时金币越多，金币流成长越高。", (c, s) => {
     c.mult += s.growth.wealthFan;
@@ -170,8 +176,11 @@ const ARTIFACTS = [
   artifact("clearMirror", "清门镜", "清", "清一色最终得分 ×2.5。", (c) => {
     if (hasTag(c, "flush")) c.factor *= 2.5;
   }, { lane: "清一色" }),
-  artifact("pairNeedle", "鸳鸯针", "双", "对子系番数 +4；牌山对子越多额外越高。", (c) => {
-    if (hasTag(c, "pair")) c.mult += 4 + Math.floor(deckPairPotential() / 6);
+  artifact("pairNeedle", "鸳鸯针", "双", "对子系番数 +4；牌山对子越多额外越高；两对额外 ×1.6。", (c) => {
+    if (hasTag(c, "pair")) {
+      c.mult += 4 + Math.floor(deckPairPotential() / 6);
+      if (c.combo.name === "两对") c.factor *= 1.6;
+    }
   }, { lane: "对子" }),
   artifact("stonePot", "镇山炉", "山", "选择 5 张牌时点数 +110。", (c) => {
     if (c.tiles.length === 5) c.base += 110;
@@ -179,9 +188,10 @@ const ARTIFACTS = [
   artifact("windBanner", "风神幡", "风", "每张风牌番数 +1。", (c) => {
     c.mult += countSuit(c.tiles, "wind");
   }, { lane: "字牌" }),
-  artifact("trinityLamp", "三元灯", "元", "小三元番数 +5，三元牌点数 +30。", (c) => {
+  artifact("trinityLamp", "三元灯", "元", "小三元番数 +5，三元牌点数 +30；三元归位额外 ×2.4。", (c) => {
     c.base += countSuit(c.tiles, "dragon") * 30;
     if (hasTag(c, "dragon")) c.mult += 5;
+    if (c.combo.name === "三元归位") c.factor *= 2.4;
   }, { lane: "字牌" }),
   artifact("looseManual", "散修录", "散", "散牌番数 +3，每次散牌出牌成长 +1番；过关时散牌底盘 +28点、补字牌和换牌。", (c) => {
     if (hasTag(c, "loose")) {
@@ -223,9 +233,10 @@ const ARTIFACTS = [
   artifact("sameGate", "同门契", "门", "同门散牌和清一色点数 +70。", (c) => {
     if (hasTag(c, "sameSuit") || hasTag(c, "flush")) c.base += 70;
   }, { lane: "清一色" }),
-  artifact("pairEcho", "对子回声", "回", "对子、两对、满堂刻最终得分 ×2；连续对子系再 ×1.4。", (c, s) => {
+  artifact("pairEcho", "对子回声", "回", "对子、两对、满堂刻最终得分 ×2；两对额外 ×1.5；连续对子系再 ×1.4。", (c, s) => {
     if (hasTag(c, "pair")) {
       c.factor *= 2;
+      if (c.combo.name === "两对") c.factor *= 1.5;
       if (s.lastComboTags.includes("pair")) c.factor *= 1.4;
     }
   }, { lane: "对子" }),
@@ -1094,6 +1105,14 @@ function evaluateSameNumberTiles(tiles) {
 function isDragonFullSet(tiles) {
   if (!tiles.every((tile) => tile.suit === "dragon")) return false;
   return new Set(tiles.map((tile) => tile.rank)).size === 3;
+}
+
+function isBigTripletCombo(combo) {
+  return combo.tags.includes("triplet") && (combo.name === "满堂刻" || combo.name === "清一色满堂刻" || combo.name === "清一色杠子" || combo.name === "三元归位");
+}
+
+function isBigStraightCombo(combo) {
+  return combo.name === "清一色两顺";
 }
 
 function recordComboLane(combo) {
