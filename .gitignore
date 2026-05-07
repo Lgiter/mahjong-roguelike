@@ -1,0 +1,5 @@
+# 微信开发者工具本地配置，不同开发者的设置不同，不提交
+project.private.config.json
+
+# macOS
+.DS_Store
