@@ -51,7 +51,7 @@ const STAGES = [
   { target: 68000, hands: 4, discards: 2, enemy: "三元使", boss: true, rule: { id: "noDragon", text: "Boss：三元牌基础点被压制" } },
   { target: 115000, hands: 4, discards: 3, enemy: "黑风客" },
   { target: 190000, hands: 4, discards: 2, enemy: "铁算盘", boss: true, rule: { id: "coinBleed", text: "Boss：每次出牌后金币 -2" } },
-  { target: 320000, hands: 4, discards: 2, enemy: "三元龙王", boss: true, rule: { id: "repeatTax", text: "Boss：重复上次牌型番数 -3" } },
+  { target: 320000, hands: 4, discards: 2, enemy: "三元龙王", boss: true },
 ];
 
 const CORE_ARTIFACT_IDS = ["greenDragon", "whiteTiger", "cashToFan", "looseManual", "clearMirror", "pairNeedle"];
@@ -70,6 +70,7 @@ const HAND_RANKS = [
   ["三门同数", 48, 2],
   ["两对", 66, 3],
   ["顺子", 58, 3],
+  ["连四", 96, 4],
   ["刻子", 72, 3],
   ["杠子", 110, 4],
   ["小三元", 130, 6],
@@ -90,6 +91,7 @@ const HAND_HELP = [
   ["三门同数", "万、筒、条同一个数字各 1 张，例如 6万6筒6条。"],
   ["两对", "4 张牌，包含两组对子。"],
   ["顺子", "3 张同花色连续数字，例如 3条4条5条。"],
+  ["连四", "4 张同花色连续数字，例如 2万3万4万5万。"],
   ["刻子", "3 张完全相同。"],
   ["杠子", "4 张完全相同。"],
   ["小三元", "中、发、白各 1 张。"],
@@ -1071,6 +1073,7 @@ function evaluateTiles(tiles) {
   const values = [...counts.values()].sort((a, b) => b - a);
   const ranks = tiles.map((tile) => tile.rank).sort((a, b) => a - b);
   const straight = tiles.length === 3 && sameSuit && numeric && ranks[0] + 1 === ranks[1] && ranks[1] + 1 === ranks[2];
+  const run4 = tiles.length === 4 && sameSuit && numeric && new Set(ranks).size === 4 && ranks.every((r, i) => i === 0 || r === ranks[i - 1] + 1);
   const run5 = tiles.length === 5 && sameSuit && numeric && new Set(ranks).size === 5 && ranks.every((r, i) => i === 0 || r === ranks[i - 1] + 1);
   if (tiles.length === 5 && sameSuit && numeric && values[0] === 4) return { valid: true, name: "清一色杠子", base: 220, mult: 8, tags: ["flush", "triplet"] };
   if (tiles.length === 5 && sameSuit && numeric && values.join(",") === "3,2") return { valid: true, name: "清一色满堂刻", base: 230, mult: 8, tags: ["flush", "triplet", "pair"] };
@@ -1080,6 +1083,7 @@ function evaluateTiles(tiles) {
   if (tiles.length === 4 && values[0] === 4) return { valid: true, name: "杠子", base: 110, mult: 4, tags: ["triplet"] };
   if (tiles.length === 3 && values[0] === 3) return { valid: true, name: "刻子", base: 72, mult: 3, tags: ["triplet"] };
   if (straight) return { valid: true, name: "顺子", base: 58, mult: 3, tags: ["straight"] };
+  if (run4) return { valid: true, name: "连四", base: 96, mult: 4, tags: ["straight"] };
   if (tiles.length === 4 && values.join(",") === "2,2") return { valid: true, name: "两对", base: 66, mult: 3, tags: ["pair"] };
   if (tiles.length === 2 && values[0] === 2) return { valid: true, name: "对子", base: 34, mult: 2, tags: ["pair"] };
   if (isDragonFullSet(tiles) && tiles.length === 5 && values[0] >= 2) return { valid: true, name: "三元归位", base: 210, mult: 8, tags: ["dragon", "pair"] };
