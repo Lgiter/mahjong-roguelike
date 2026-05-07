@@ -386,6 +386,8 @@ const state = {
   runCount: 0,
   debugMode: false,
   showDealDebug: false,
+  dmgPops: [],
+  hpFlash: null,
   enemyFx: null,
   boughtUpgradeThisReward: false,
   pendingArtifact: null,
@@ -454,6 +456,8 @@ function startRun(startIndex = 0, debugMode = false, startBuild = START_BUILDS[0
   state.lastTriggeredArtifacts = [];
   state.rewardChoices = [];
   state.paidUpgradeChoices = [];
+  state.dmgPops = [];
+  state.hpFlash = null;
   state.enemyFx = null;
   state.boughtUpgradeThisReward = false;
   state.inspectedArtifact = null;
@@ -518,7 +522,7 @@ function playSelected() {
   state.stageBestScore = Math.max(state.stageBestScore, playTotal);
   state.stageTotalScore += playTotal;
   state.stagePlays += 1;
-  triggerEnemyFx(combo, playTotal);
+  triggerEnemyFx(combo, playTotal, beforeScore);
   state.handsLeft -= 1;
   state.coins += combo.tags.includes("flush") ? 2 : 1;
   if (state.stageEvent?.id === "windfall") state.coins += 1;
@@ -547,7 +551,7 @@ function discardSelected() {
   refillHand();
 }
 
-function triggerEnemyFx(combo, total) {
+function triggerEnemyFx(combo, total, prevScore) {
   const style = attackStyle(combo);
   state.enemyFx = {
     until: Date.now() + 520,
@@ -557,7 +561,22 @@ function triggerEnemyFx(combo, total) {
     comboName: combo.name,
     kind: style.kind,
     color: style.color,
+    rgb: colorToRgb(style.color),
   };
+  const target = stageTarget();
+  state.hpFlash = {
+    prevRatio: Math.max(0, 1 - prevScore / target),
+    newRatio: Math.max(0, 1 - state.score / target),
+    until: Date.now() + 550,
+  };
+  state.dmgPops.push({
+    value: total,
+    x: W / 2 + (Math.random() * 44 - 22),
+    y: 128,
+    until: Date.now() + 700,
+    tier: attackTier(total),
+    color: style.color,
+  });
 }
 
 function attackLabel(combo) {
@@ -585,6 +604,14 @@ function attackStyle(combo) {
   if (combo.tags.includes("dragon")) return { kind: "seal", color: "#e6e1d2" };
   if (combo.tags.includes("high")) return { kind: "sting", color: "#56a8ff" };
   return { kind: "shock", color: "#a9b1ad" };
+}
+
+function bossStatusText(stage, remainingRatio) {
+  if (!stage.boss) return "以牌为术，压制妖灵";
+  if (remainingRatio <= 0.08) return "不可能……！";
+  if (remainingRatio <= 0.25) return "你……比我想象的强";
+  if (remainingRatio <= 0.55) return "哼，有点意思";
+  return "不要高兴得太早！";
 }
 
 function applyUpgradeAfterPlay(combo, tiles) {
@@ -1291,6 +1318,8 @@ function draw() {
   if (state.screen === "start") drawStart();
   if (state.screen === "build") drawBuildSelect();
   if (state.screen === "game") drawGame();
+  if (state.screen === "game") drawScreenFlash();
+  if (state.screen === "game") drawDmgPops();
   if (state.screen === "reward") drawReward();
   if (state.screen === "replace") drawReplace();
   if (state.screen === "end") drawEnd();
@@ -1388,10 +1417,39 @@ function drawEnemyPanel(stage) {
   drawEnemyAttackFx(x, y, w, fx);
   text(stage.enemy, x + 14, y + 30, 21, COLORS.text, "left", "bold");
   if (stage.boss) pill(x + w - 72, y + 12, 58, 26, "Boss", COLORS.red);
-  const attackText = fx ? `${fx.attack} · -${formatInt(fx.damage)}` : "以牌为术，压制妖灵";
-  text(attackText, x + 14, y + 52, 12, fx ? fx.color : COLORS.muted, "left", "bold");
+
+  const remainingRatio = Math.max(0, 1 - state.score / stageTarget());
+  const hpColor = remainingRatio > 0.6 ? COLORS.green : remainingRatio > 0.3 ? "#f2bd55" : remainingRatio > 0.1 ? "#f29455" : COLORS.red;
+  const statusText = fx ? `${fx.attack} · -${formatInt(fx.damage)}` : bossStatusText(stage, remainingRatio);
+  const statusColor = fx ? fx.color : (remainingRatio < 0.3 ? COLORS.red : COLORS.muted);
+  text(statusText, x + 14, y + 52, 12, statusColor, "left", "bold");
+
+  // HP 背景槽
   roundRect(x + 14, y + 64, hpW, 16, 8, "#0d0f10");
-  roundRect(x + 14, y + 64, hpW * Math.min(1, state.score / stageTarget()), 16, 8, fx ? fx.color : COLORS.green);
+
+  // 受击白闪：刚被打掉的那段 HP 短暂高亮
+  if (state.hpFlash && Date.now() < state.hpFlash.until) {
+    const t = (state.hpFlash.until - Date.now()) / 550;
+    const chunkX = x + 14 + hpW * state.hpFlash.newRatio;
+    const chunkW = hpW * (state.hpFlash.prevRatio - state.hpFlash.newRatio);
+    if (chunkW > 0) {
+      ctx.globalAlpha = t * 0.85;
+      roundRect(chunkX, y + 64, chunkW, 16, 4, "#ffffff");
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // HP 剩余段
+  if (remainingRatio > 0) roundRect(x + 14, y + 64, hpW * remainingRatio, 16, 8, hpColor);
+
+  // 血量极低时脉冲提示
+  if (remainingRatio > 0 && remainingRatio < 0.1) {
+    const pulse = (Math.sin(Date.now() / 180) + 1) / 2;
+    ctx.globalAlpha = pulse * 0.35;
+    roundRect(x + 14, y + 64, hpW * remainingRatio, 16, 8, "#ffffff");
+    ctx.globalAlpha = 1;
+  }
+
   text(`${formatInt(state.score)} / ${formatInt(stageTarget())}`, x + 14, y + 102, 13, COLORS.muted);
   const remaining = Math.max(0, stageTarget() - state.score);
   const needed = state.handsLeft ? Math.ceil(remaining / state.handsLeft) : remaining;
@@ -1452,6 +1510,31 @@ function drawBossSigil(x, y, fx) {
       roundRect(x + 6 + i * 10, y + 60, 6, 6, 3, core);
     }
   }
+}
+
+function drawDmgPops() {
+  const now = Date.now();
+  state.dmgPops = state.dmgPops.filter((p) => now < p.until);
+  state.dmgPops.forEach((p) => {
+    const t = (p.until - now) / 700;
+    const floatY = p.y - (1 - t) * 52;
+    const size = p.tier >= 4 ? 36 : p.tier >= 3 ? 29 : p.tier >= 2 ? 22 : 17;
+    ctx.globalAlpha = Math.min(1, t * 2.2);
+    text(`-${formatInt(p.value)}`, p.x, floatY, size, p.color, "center", "bold");
+    ctx.globalAlpha = 1;
+  });
+}
+
+function drawScreenFlash() {
+  const fx = state.enemyFx;
+  if (!fx || Date.now() >= fx.until || fx.tier < 3) return;
+  const t = (fx.until - Date.now()) / 520;
+  const a = t * (fx.tier >= 4 ? 0.32 : 0.2);
+  const edgeH = fx.tier >= 4 ? 14 : 9;
+  fillRect(0, 0, W, edgeH, `rgba(${fx.rgb},${a * 1.6})`);
+  fillRect(0, H - edgeH, W, edgeH, `rgba(${fx.rgb},${a * 1.6})`);
+  fillRect(0, 0, edgeH, H, `rgba(${fx.rgb},${a})`);
+  fillRect(W - edgeH, 0, edgeH, H, `rgba(${fx.rgb},${a})`);
 }
 
 function drawTopBar(stage) {
@@ -2135,6 +2218,10 @@ function formatInt(value) {
 
 function formatNum(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function colorToRgb(hex) {
+  return `${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)}`;
 }
 
 function toast(message) {
