@@ -1,0 +1,71 @@
+import type { GameState } from '../data/types';
+
+export function createInitialState(): GameState {
+  return {
+    screen: 'start',
+    stageIndex: 0,
+    score: 0,
+    coins: 6,
+    handsLeft: 0,
+    discardsLeft: 0,
+    hand: [],
+    selected: new Set(),
+    deck: [],
+    discard: [],
+    artifacts: [],
+    upgrades: { straightBase: 0, tripletBase: 0, flushMult: 0 },
+    upgradeFlags: { straightFirstBurst: false, tripletEcho: false, flushFirstFan: false },
+    upgradeUses: { straightFirstBurstUsed: false, flushFirstFanUsed: false },
+    growth: { straightFan: 0, tripletBase: 0, wealthFan: 0, looseFan: 0, looseBase: 0, highFactor: 0 },
+    nextHandBonus: 0,
+    targetMultiplier: 1,
+    nextTargetPenalty: 0,
+    luckUsed: false,
+    lastCombo: '',
+    lastComboTags: [],
+    stageComboCounts: {},
+    stageBestScore: 0,
+    stageTotalScore: 0,
+    stagePlays: 0,
+    stageSummary: null,
+    lastStageLane: '',
+    laneMisses: {},
+    stageEvent: null,
+    stageEventFirstHandUsed: false,
+    catchUpAvailable: false,
+    finalPrepAvailable: false,
+    targetAssistNext: 0,
+    deckChanges: [],
+    log: [],
+    lastTriggeredArtifacts: [],
+    rewardChoices: [],
+    paidUpgradeChoices: [],
+    startBuildChoices: [],
+    startLane: '',
+    artifactSlots: 5,
+    runCount: 0,
+    debugMode: false,
+    showDealDebug: false,
+    dmgPops: [],
+    hpFlash: null,
+    enemyFx: null,
+    boughtUpgradeThisReward: false,
+    pendingArtifact: null,
+    inspectedArtifact: null,
+    showStageSelect: false,
+    showHandHelp: false,
+    showGuide: false,
+    resolve: null,
+    adPrompt: null,
+    adsUsed: { hand: 0, discard: 0, refresh: 0, revive: 0 },
+    toast: '',
+    toastUntil: 0,
+  };
+}
+
+import { STAGES } from '../data/stages';
+
+export function stageTarget(state: GameState, stageIdx?: number): number {
+  const idx = stageIdx ?? state.stageIndex;
+  return Math.round((STAGES[idx]?.target ?? 0) * state.targetMultiplier);
+}

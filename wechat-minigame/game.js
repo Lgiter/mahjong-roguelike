@@ -326,6 +326,39 @@ const STAGE_EVENTS = [
   { id: "lucky", text: "幸运局：首次出牌得分 ×1.5" },
 ];
 
+// ── 关卡背景主题 ─────────────────────────────────────────────────────────────
+const STAGE_THEMES = [
+  { top: "#1a0800", mid: "#2d1000", accent: "#8B2A0A", pattern: "flame" },   // 赤鳞妖
+  { top: "#14100000", mid: "#2a1e00", accent: "#7a5800", pattern: "coin" },   // 铜钱怪
+  { top: "#0e0016", mid: "#1c0030", accent: "#7a1a8B", pattern: "smoke" },   // 烟火狐
+  { top: "#030000", mid: "#0d0000", accent: "#8B0000", pattern: "chain" },   // 断门鬼 Boss
+  { top: "#0a0806", mid: "#181410", accent: "#5B4C3A", pattern: "rock" },    // 石面将
+  { top: "#00080e", mid: "#001525", accent: "#0A3A5B", pattern: "wind" },    // 白风客
+  { top: "#060010", mid: "#0e0028", accent: "#400a8B", pattern: "seal" },    // 封顺魇 Boss
+  { top: "#141000", mid: "#28200000", accent: "#7B6400", pattern: "bell" },  // 金铃童子
+  { top: "#001408", mid: "#002514", accent: "#0A5B2A", pattern: "jade" },    // 三元使 Boss
+  { top: "#000000", mid: "#040408", accent: "#0d0d1a", pattern: "void" },    // 黑风客
+  { top: "#070707", mid: "#0f0f0f", accent: "#282828", pattern: "grid" },    // 铁算盘 Boss
+  { top: "#1a0900", mid: "#2d1400", accent: "#8B3200", pattern: "dragon" },  // 三元龙王 Boss
+];
+
+// ── Boss 图片加载 ─────────────────────────────────────────────────────────────
+const BOSS_IMG_SRCS = [
+  "assets/bosses/stage0.jpg", // 赤鳞妖
+  null, null, null, null, null, null, null, null, null, null, null,
+];
+const _bossImgs = new Array(12).fill(null);
+
+function preloadBossImages() {
+  BOSS_IMG_SRCS.forEach((src, i) => {
+    if (!src) return;
+    const img = wx.createImage();
+    img.onload = () => { _bossImgs[i] = img; };
+    img.onerror = () => {};
+    img.src = src;
+  });
+}
+
 const DEBUG_DEAL_PRESETS = [
   { id: "pair", name: "对子" },
   { id: "twoPair", name: "两对" },
@@ -413,6 +446,7 @@ wx.onTouchStart((event) => {
 });
 
 function startRun(startIndex = 0, debugMode = false, startBuild = START_BUILDS[0]) {
+  preloadBossImages();
   state.screen = "game";
   state.stageIndex = startIndex;
   state.debugMode = debugMode;
@@ -553,11 +587,12 @@ function discardSelected() {
 
 function triggerEnemyFx(combo, total, prevScore) {
   const style = attackStyle(combo);
+  const tier = attackTier(total, prevScore);
   state.enemyFx = {
-    until: Date.now() + 520,
+    until: Date.now() + (tier >= 4 ? 700 : tier >= 3 ? 600 : 520),
     attack: attackLabel(combo),
     damage: total,
-    tier: attackTier(total),
+    tier,
     comboName: combo.name,
     kind: style.kind,
     color: style.color,
@@ -573,9 +608,10 @@ function triggerEnemyFx(combo, total, prevScore) {
     value: total,
     x: W / 2 + (Math.random() * 44 - 22),
     y: 128,
-    until: Date.now() + 700,
-    tier: attackTier(total),
+    until: Date.now() + (tier >= 3 ? 1000 : 700),
+    tier,
     color: style.color,
+    particles: null,
   });
 }
 
@@ -589,10 +625,14 @@ function attackLabel(combo) {
   return "压制";
 }
 
-function attackTier(total) {
-  if (total >= 50000) return 4;
-  if (total >= 12000) return 3;
-  if (total >= 3000) return 2;
+function attackTier(total, prevScore) {
+  // Relative to "needed per hand" at the moment of this play
+  const handsLeft = Math.max(1, state.handsLeft); // still pre-decrement when called
+  const needed = Math.ceil(Math.max(1, stageTarget() - (prevScore ?? state.score)) / handsLeft);
+  const ratio = total / needed;
+  if (ratio >= 5) return 4;  // 神威
+  if (ratio >= 2) return 3;  // 暴击
+  if (ratio >= 0.7) return 2; // 重击
   return 1;
 }
 
@@ -1071,7 +1111,9 @@ function refillHand() {
 
 function topUpHand() {
   while (state.hand.length < handLimit()) {
-    state.hand.push(state.hand.length ? cloneTile(sample(state.hand)) : { id: uid(), suit: "wan", rank: 5 });
+    reshuffleIfNeeded(1);
+    if (!state.deck.length) break;
+    state.hand.push(...drawTiles(1));
   }
 }
 
@@ -1372,6 +1414,7 @@ function drawBuildSelect() {
 }
 
 function drawGame() {
+  drawBackground();
   const compact = isCompact();
   const stage = currentStage();
   const selected = selectedTiles();
@@ -1458,7 +1501,7 @@ function drawEnemyPanel(stage) {
   text(`${state.handsLeft}`, x + w - 130, y + 82, 26, state.handsLeft <= 1 ? COLORS.red : COLORS.gold, "center", "bold");
   text("换牌", x + w - 90, y + 74, 12, COLORS.muted);
   text(`${state.discardsLeft}`, x + w - 56, y + 82, 26, state.discardsLeft <= 0 ? COLORS.red : COLORS.gold, "center", "bold");
-  drawBossSigil(x + w - 96, y + 18, fx);
+  drawBossPortrait(x + w - 96, y + 10, 82, 82, fx);
 }
 
 function drawEnemyAttackFx(x, y, w, fx) {
@@ -1499,6 +1542,159 @@ function drawEnemyAttackFx(x, y, w, fx) {
   }
 }
 
+// ── 关卡背景 ──────────────────────────────────────────────────────────────────
+function drawBackground() {
+  const theme = STAGE_THEMES[Math.min(state.stageIndex, STAGE_THEMES.length - 1)];
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, theme.top);
+  grad.addColorStop(0.55, theme.mid);
+  grad.addColorStop(1, theme.top);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  drawBgPattern(theme);
+}
+
+function drawBgPattern(theme) {
+  const t = Date.now() / 1000;
+  ctx.globalAlpha = 0.07;
+  ctx.strokeStyle = theme.accent;
+  ctx.fillStyle = theme.accent;
+  ctx.lineWidth = 1;
+
+  if (theme.pattern === "flame") {
+    for (let i = 0; i < 5; i++) {
+      const x = W * (0.1 + i * 0.2);
+      const drift = Math.sin(t * 0.6 + i * 1.3) * 12;
+      ctx.beginPath();
+      ctx.moveTo(x + drift, H);
+      ctx.bezierCurveTo(x + drift - 16, H * 0.7, x + drift + 16, H * 0.45, x + drift * 0.3, H * 0.15);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  } else if (theme.pattern === "coin") {
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) {
+      const cx = W * (0.12 + c * 0.26), cy = H * (0.18 + r * 0.34);
+      ctx.beginPath(); ctx.arc(cx, cy, 22, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.stroke();
+    }
+  } else if (theme.pattern === "chain") {
+    for (let i = 0; i < 5; i++) {
+      const x = W * (0.1 + i * 0.22);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 14, H); ctx.lineWidth = 2; ctx.stroke();
+      for (let j = 0; j < 6; j++) {
+        const ly = H * (0.1 + j * 0.16);
+        ctx.beginPath(); ctx.ellipse(x + 7, ly, 10, 6, 0.4, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+  } else if (theme.pattern === "seal") {
+    for (let i = 0; i < 3; i++) {
+      const cx = W / 2, cy = H * (0.25 + i * 0.3);
+      const r = 28 + i * 10;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, r * 0.55, 0, Math.PI * 2); ctx.stroke();
+    }
+  } else if (theme.pattern === "dragon") {
+    for (let row = 0; row < 9; row++) for (let col = 0; col < 7; col++) {
+      const sx = col * (W / 6) + (row % 2 ? W / 12 : 0), sy = row * (H / 8);
+      ctx.beginPath(); ctx.arc(sx, sy, 17, Math.PI, Math.PI * 2); ctx.stroke();
+    }
+  } else if (theme.pattern === "grid") {
+    for (let i = 0; i <= 8; i++) {
+      ctx.beginPath(); ctx.moveTo(W * i / 8, 0); ctx.lineTo(W * i / 8, H); ctx.stroke();
+    }
+    for (let i = 0; i <= 12; i++) {
+      ctx.beginPath(); ctx.moveTo(0, H * i / 12); ctx.lineTo(W, H * i / 12); ctx.stroke();
+    }
+  } else if (theme.pattern === "wind") {
+    for (let i = 0; i < 4; i++) {
+      const cx = W * (0.2 + i * 0.22), cy = H * 0.38 + Math.sin(t + i) * 20;
+      for (let r = 1; r <= 3; r++) {
+        ctx.beginPath(); ctx.arc(cx, cy, r * 18, -0.3, Math.PI + 0.3); ctx.stroke();
+      }
+    }
+  } else if (theme.pattern === "rock") {
+    for (let i = 0; i < 6; i++) {
+      const x = W * (0.05 + (i % 3) * 0.35), y = H * (0.2 + Math.floor(i / 3) * 0.45);
+      ctx.beginPath(); ctx.moveTo(x, y + 20); ctx.lineTo(x + 22, y); ctx.lineTo(x + 44, y + 20);
+      ctx.lineTo(x + 38, y + 44); ctx.lineTo(x + 6, y + 44); ctx.closePath(); ctx.stroke();
+    }
+  } else if (theme.pattern === "jade") {
+    for (let i = 0; i < 4; i++) {
+      const cx = W * (0.15 + i * 0.24), cy = H * 0.35;
+      ctx.beginPath(); ctx.moveTo(cx, cy - 24); ctx.lineTo(cx + 14, cy); ctx.lineTo(cx, cy + 24);
+      ctx.lineTo(cx - 14, cy); ctx.closePath(); ctx.stroke();
+    }
+  } else if (theme.pattern === "smoke") {
+    for (let i = 0; i < 4; i++) {
+      const cx = W * (0.15 + i * 0.24), cy = H * (0.3 + Math.sin(t * 0.4 + i) * 0.1);
+      const rg = ctx.createRadialGradient(cx, cy, 4, cx, cy, 42);
+      rg.addColorStop(0, theme.accent); rg.addColorStop(1, "transparent");
+      ctx.fillStyle = rg; ctx.globalAlpha = 0.09;
+      ctx.beginPath(); ctx.arc(cx, cy, 42, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (theme.pattern === "bell") {
+    for (let i = 0; i < 5; i++) {
+      const bx = W * (0.1 + i * 0.2), by = H * 0.28 + Math.sin(t * 1.2 + i) * 8;
+      ctx.beginPath(); ctx.arc(bx, by, 14, Math.PI, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(bx - 14, by); ctx.lineTo(bx - 18, by + 18);
+      ctx.lineTo(bx + 18, by + 18); ctx.lineTo(bx + 14, by); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── Boss 立绘 ─────────────────────────────────────────────────────────────────
+function drawBossPortrait(x, y, w, h, fx) {
+  const img = _bossImgs[state.stageIndex];
+  const remainingRatio = Math.max(0, 1 - state.score / stageTarget());
+  const hitPct = state.hpFlash && Date.now() < state.hpFlash.until
+    ? (state.hpFlash.until - Date.now()) / 550 : 0;
+  const idleFloat = Math.sin(Date.now() / 900) * 2.5;
+
+  if (img) {
+    ctx.save();
+    pathRound(x, y, w, h, 10);
+    ctx.clip();
+
+    // 受击后退
+    const recoilX = hitPct * 7;
+    ctx.drawImage(img, x + recoilX, y + idleFloat, w, h);
+
+    // 濒死红晕
+    if (remainingRatio < 0.2) {
+      const pulse = (Math.sin(Date.now() / 260) + 1) / 2;
+      ctx.globalAlpha = (1 - remainingRatio / 0.2) * 0.38 * pulse;
+      ctx.fillStyle = "#cc1100";
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+    }
+
+    // 受击白闪
+    if (hitPct > 0) {
+      ctx.globalAlpha = hitPct * 0.52;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(x, y, w, h);
+      ctx.globalAlpha = 1;
+    }
+
+    // 攻击时眼部金光
+    if (fx && Date.now() < fx.until) {
+      const fxT = (fx.until - Date.now()) / fx.until * 0;
+      const eyeA = Math.max(0, (fx.until - Date.now()) / 520) * 0.65;
+      const eyeGrad = ctx.createRadialGradient(x + w * 0.5, y + h * 0.36, 3, x + w * 0.5, y + h * 0.36, w * 0.45);
+      eyeGrad.addColorStop(0, `rgba(255,180,0,${eyeA})`);
+      eyeGrad.addColorStop(1, "rgba(255,80,0,0)");
+      ctx.fillStyle = eyeGrad;
+      ctx.fillRect(x, y, w, h);
+    }
+
+    ctx.restore();
+    strokeRound(x, y, w, h, 10, fx && Date.now() < fx.until ? fx.color : "rgba(255,255,255,0.15)", fx ? 2 : 1);
+  } else {
+    drawBossSigil(x, y + (h - 54) / 2, fx);
+  }
+}
+
 function drawBossSigil(x, y, fx) {
   const core = fx ? fx.color : COLORS.line;
   roundRect(x, y, 54, 54, 10, "#151a1d");
@@ -1516,10 +1712,54 @@ function drawDmgPops() {
   const now = Date.now();
   state.dmgPops = state.dmgPops.filter((p) => now < p.until);
   state.dmgPops.forEach((p) => {
-    const t = (p.until - now) / 700;
-    const floatY = p.y - (1 - t) * 52;
-    const size = p.tier >= 4 ? 36 : p.tier >= 3 ? 29 : p.tier >= 2 ? 22 : 17;
-    ctx.globalAlpha = Math.min(1, t * 2.2);
+    const dur = p.tier >= 3 ? 1000 : 700;
+    const t = Math.max(0, (p.until - now) / dur);
+    const elapsed = 1 - t;
+    const floatY = p.y - elapsed * 60;
+
+    // 粒子（tier 3+）
+    if (p.tier >= 3) {
+      if (!p.particles) {
+        const count = p.tier >= 4 ? 16 : 10;
+        p.particles = Array.from({ length: count }, () => ({
+          angle: Math.random() * Math.PI * 2,
+          speed: 1 + Math.random() * 2,
+          r: 2 + Math.random() * 3,
+        }));
+      }
+      p.particles.forEach((pt) => {
+        const px = p.x + Math.cos(pt.angle) * pt.speed * elapsed * 58;
+        const py = (p.y - 4) + Math.sin(pt.angle) * pt.speed * elapsed * 44;
+        ctx.globalAlpha = Math.max(0, t * 1.6 - 0.3);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(px, py, pt.r * t, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+    }
+
+    // 暴击 / 神威 标签
+    if (p.tier >= 4 && t > 0.45) {
+      ctx.globalAlpha = Math.min(1, (t - 0.45) * 3) * t;
+      text("神  威", p.x, floatY - 32, 15, COLORS.gold, "center", "bold");
+      ctx.globalAlpha = 1;
+    } else if (p.tier >= 3 && t > 0.4) {
+      ctx.globalAlpha = Math.min(1, (t - 0.4) * 3) * t;
+      text("暴击", p.x, floatY - 26, 13, p.color, "center", "bold");
+      ctx.globalAlpha = 1;
+    }
+
+    const size = p.tier >= 4 ? 40 : p.tier >= 3 ? 32 : p.tier >= 2 ? 24 : 17;
+    ctx.globalAlpha = Math.min(1, t * 2.4);
+    // tier4 加金色描边感
+    if (p.tier >= 4) {
+      ctx.strokeStyle = COLORS.gold;
+      ctx.lineWidth = 1.5;
+      ctx.font = `bold ${size}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.strokeText(`-${formatInt(p.value)}`, p.x, floatY);
+    }
     text(`-${formatInt(p.value)}`, p.x, floatY, size, p.color, "center", "bold");
     ctx.globalAlpha = 1;
   });
@@ -1527,14 +1767,39 @@ function drawDmgPops() {
 
 function drawScreenFlash() {
   const fx = state.enemyFx;
-  if (!fx || Date.now() >= fx.until || fx.tier < 3) return;
-  const t = (fx.until - Date.now()) / 520;
-  const a = t * (fx.tier >= 4 ? 0.32 : 0.2);
-  const edgeH = fx.tier >= 4 ? 14 : 9;
-  fillRect(0, 0, W, edgeH, `rgba(${fx.rgb},${a * 1.6})`);
-  fillRect(0, H - edgeH, W, edgeH, `rgba(${fx.rgb},${a * 1.6})`);
+  if (!fx || Date.now() >= fx.until) return;
+  const dur = fx.tier >= 4 ? 700 : fx.tier >= 3 ? 600 : 520;
+  const t = Math.max(0, (fx.until - Date.now()) / dur);
+  if (fx.tier < 2) return;
+
+  const a = t * (fx.tier >= 4 ? 0.42 : fx.tier >= 3 ? 0.28 : 0.14);
+  const edgeH = fx.tier >= 4 ? 20 : fx.tier >= 3 ? 13 : 7;
+
+  // 边缘光晕
+  fillRect(0, 0, W, edgeH, `rgba(${fx.rgb},${a * 1.8})`);
+  fillRect(0, H - edgeH, W, edgeH, `rgba(${fx.rgb},${a * 1.8})`);
   fillRect(0, 0, edgeH, H, `rgba(${fx.rgb},${a})`);
   fillRect(W - edgeH, 0, edgeH, H, `rgba(${fx.rgb},${a})`);
+
+  // tier3：屏幕顶部横扫光线
+  if (fx.tier >= 3) {
+    const grad = ctx.createLinearGradient(0, 0, 0, H * 0.45);
+    grad.addColorStop(0, `rgba(${fx.rgb},${t * 0.22})`);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H * 0.45);
+  }
+
+  // tier4：从 Boss 区域辐射的金光爆闪
+  if (fx.tier >= 4) {
+    const cx = W / 2, cy = H * 0.22;
+    const grad = ctx.createRadialGradient(cx, cy, 8, cx, cy, W * 0.9);
+    grad.addColorStop(0, `rgba(242,189,85,${t * 0.38})`);
+    grad.addColorStop(0.4, `rgba(${fx.rgb},${t * 0.18})`);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
 }
 
 function drawTopBar(stage) {
