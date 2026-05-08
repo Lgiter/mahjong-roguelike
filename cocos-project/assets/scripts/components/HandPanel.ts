@@ -23,6 +23,9 @@ export class HandPanel extends Component {
   /** Preview label node above the hand */
   @property(Node) previewLabelNode: Node | null = null;
 
+  /** Alternative to tileCardPrefab — set programmatically by GameBootstrap */
+  nodeFactory: (() => Node) | null = null;
+
   private _tileNodes: Node[] = [];
 
   refresh(state: GameState): void {
@@ -48,13 +51,14 @@ export class HandPanel extends Component {
   }
 
   private _syncTileCount(count: number): void {
-    // Add missing nodes
     while (this._tileNodes.length < count) {
-      const node = instantiate(this.tileCardPrefab!);
+      const node = this.tileCardPrefab
+        ? instantiate(this.tileCardPrefab)
+        : this.nodeFactory?.() ?? null;
+      if (!node) return;
       this.tileContainer!.addChild(node);
       this._tileNodes.push(node);
     }
-    // Hide extras
     this._tileNodes.forEach((n, i) => { n.active = i < count; });
   }
 }

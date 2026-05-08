@@ -33,6 +33,9 @@ export class RewardPanel extends Component {
   @property(Node)   catchUpBtn: Node | null = null;
   @property(Label)  bonusLabel: Label | null = null;
 
+  /** Alternative to choiceCardPrefab — set programmatically by GameBootstrap */
+  nodeFactory: (() => Node) | null = null;
+
   private _choiceNodes: Node[] = [];
 
   refresh(state: GameState): void {
@@ -70,7 +73,10 @@ export class RewardPanel extends Component {
 
     // Add missing card nodes
     while (this._choiceNodes.length < items.length) {
-      const n = instantiate(this.choiceCardPrefab!);
+      const n = this.choiceCardPrefab
+        ? instantiate(this.choiceCardPrefab)
+        : this.nodeFactory?.() ?? null;
+      if (!n) return;
       this.choiceContainer.addChild(n);
       this._choiceNodes.push(n);
     }
