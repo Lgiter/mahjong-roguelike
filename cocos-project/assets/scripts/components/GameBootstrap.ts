@@ -10,9 +10,9 @@
  * here in code, so no manual scene editing is required.
  */
 import {
-  _decorator, Component, Node, UITransform, Label, Sprite, Layout,
-  Vec3, Vec2, color, HorizontalTextAlignment, VerticalTextAlignment,
-  instantiate,
+  _decorator, Camera, Canvas, Component, Layers, Node, UITransform, Label, Sprite, Layout,
+  color, HorizontalTextAlignment, VerticalTextAlignment,
+  instantiate, Texture2D, SpriteFrame, builtinResMgr,
 } from 'cc';
 import { GameManager }   from './GameManager';
 import { HandPanel }     from './HandPanel';
@@ -23,7 +23,6 @@ import { OverlayPanel }  from './OverlayPanel';
 import { VFXManager }    from './VFXManager';
 import { BuildPanel }    from './BuildPanel';
 import { TileCard }      from './TileCard';
-import { SUIT_LABELS, SUIT_COLORS } from '../data/constants';
 
 const { ccclass } = _decorator;
 
@@ -36,8 +35,10 @@ const W = 750, H = 1334;
 export class GameBootstrap extends Component {
 
   onLoad(): void {
+    // NOTE: Do NOT call sz(canvas, W, H) — Canvas component manages its own
+    // UITransform.contentSize and will override or reject changes.
     const canvas = this.node;
-    sz(canvas, W, H);
+    this._ensureUICamera(canvas);
 
     // ── Build scene tree ────────────────────────────────────────────────────
     const bgLayer        = this._makeBgLayer(canvas);
@@ -113,12 +114,13 @@ export class GameBootstrap extends Component {
     vfx.screenFlash  = vfxNode.getChildByName('ScreenFlash')?.getComponent(Sprite) ?? null;
     vfx.bgGradient   = bgLayer.getChildByName('BgGradient')?.getComponent(Sprite) ?? null;
 
-    // ── Attach GameManager last (its onLoad fires next frame) ───────────────
+    // ── Attach GameManager (all node refs must be set before addComponent
+    //    because addComponent triggers onLoad() synchronously in Cocos 3.x) ──
     const gm = canvas.addComponent(GameManager);
-    gm.handPanelNode   = handPanelNode;
-    gm.bossPanelNode   = bossPanelNode;
-    gm.scorePanelNode  = scorePanelNode;
-    gm.rewardPanelNode = rewardNode;
+    gm.handPanelNode    = handPanelNode;
+    gm.bossPanelNode    = bossPanelNode;
+    gm.scorePanelNode   = scorePanelNode;
+    gm.rewardPanelNode  = rewardNode;
     gm.overlayPanelNode = overlayNode;
     gm.startScreenNode  = startNode;
     gm.buildScreenNode  = buildNode;
@@ -131,11 +133,42 @@ export class GameBootstrap extends Component {
 
   // ── Panel builders ────────────────────────────────────────────────────────
 
+  private _ensureUICamera(canvas: Node): void {
+    setLayerRecursive(canvas, Layers.Enum.UI_2D);
+    canvas.setPosition(0, 0, 0);
+
+    const scene = canvas.scene;
+    scene?.getComponentsInChildren(Camera).forEach((camera) => {
+      if (camera.node.name !== 'RuntimeUICamera') {
+        camera.visibility &= ~Layers.Enum.UI_2D;
+      }
+    });
+
+    const canvasComp = canvas.getComponent(Canvas);
+    if (!canvasComp) return;
+    (canvasComp as any).alignCanvasWithScreen = false;
+    (canvasComp as any)._alignCanvasWithScreen = false;
+    sz(canvas, W, H);
+
+    if (canvasComp.cameraComponent) return;
+
+    const cameraNode = nd('RuntimeUICamera', canvas.parent ?? canvas);
+    cameraNode.layer = Layers.Enum.UI_2D;
+    cameraNode.setPosition(0, 0, 1000);
+    const camera = cameraNode.addComponent(Camera);
+    camera.projection = Camera.ProjectionType.ORTHO;
+    camera.orthoHeight = H / 2;
+    camera.visibility = Layers.Enum.UI_2D;
+    camera.priority = 100;
+    (camera as any).clearFlags = 0;
+    canvasComp.cameraComponent = camera;
+  }
+
   private _makeBgLayer(canvas: Node): Node {
     const layer = nd('BgLayer', canvas);
     const bg = nd('BgGradient', layer);
     sz(bg, W, H);
-    bg.addComponent(Sprite).color = color('#0d0604');
+    solidSprite(bg, '#0d0604');
     return layer;
   }
 
@@ -145,7 +178,7 @@ export class GameBootstrap extends Component {
     nd('ScorePopPool', n);
     const flash = nd('ScreenFlash', n);
     sz(flash, W, H);
-    flash.addComponent(Sprite).color = color('#ffffff00');
+    solidSprite(flash, '#ffffff00');
     flash.active = false;
     return n;
   }
@@ -156,11 +189,11 @@ export class GameBootstrap extends Component {
     panel.setPosition(0, 390);
     panel.addComponent(BossPanel);
 
-    // Boss portrait (right side)
+    // Boss portrait (right side) — transparent placeholder; BossPanel loads the image
     const portrait = nd('BossPortrait', panel);
     sz(portrait, 130, 170);
     portrait.setPosition(290, 0);
-    portrait.addComponent(Sprite);
+    solidSprite(portrait, '#00000000');
 
     // Name + boss tag row
     lbl(panel, 'BossNameLabel', '...', 26, { w: 460, h: 34, x: -60, y: 72, color: '#f4d27e', bold: true });
@@ -174,32 +207,29 @@ export class GameBootstrap extends Component {
 
     lbl(panel, 'StatusLabel', '', 18, { w: 460, h: 26, x: -60, y: 40, color: '#999999' });
 
-    // HP bar area — anchor(0,0.5) so x=0 aligns fills to left edge
+    // HP bar area — anchor(0,0.5) so x=0 aligns fills to left edge of container
     const hpCont = nd('HpBarContainer', panel);
     sz(hpCont, 600, 18);
     anchor(hpCont, 0, 0.5);
-    hpCont.setPosition(-300, 10);   // left edge at -300 in panel space
+    hpCont.setPosition(-300, 10);
 
     const hpBg = nd('HpBarBg', hpCont);
     sz(hpBg, 600, 18);
     anchor(hpBg, 0, 0.5);
-    hpBg.setPosition(0, 0);
-    hpBg.addComponent(Sprite).color = color('#2a2a2a');
+    solidSprite(hpBg, '#2a2a2a');
 
     const hpFill = nd('HpBarFill', hpCont);
     sz(hpFill, 600, 18);
     anchor(hpFill, 0, 0.5);
-    hpFill.setPosition(0, 0);
-    hpFill.addComponent(Sprite).color = color('#4caf50');
+    solidSprite(hpFill, '#4caf50');
 
     const hpFlash = nd('HpFlashFill', hpCont);
     sz(hpFlash, 0, 18);
     anchor(hpFlash, 0, 0.5);
-    hpFlash.setPosition(0, 0);
-    hpFlash.addComponent(Sprite).color = color('#ffffff88');
+    solidSprite(hpFlash, '#ffffff88');
     hpFlash.active = false;
 
-    // Score labels below bar
+    // Score labels
     lbl(panel, 'ScoreLabel',  '0 / 500', 21, { w: 460, h: 28, x: -60, y: -20, color: '#ffffff' });
     lbl(panel, 'NeededLabel', '',         17, { w: 460, h: 24, x: -60, y: -50, color: '#777777' });
 
@@ -213,10 +243,10 @@ export class GameBootstrap extends Component {
     panel.addComponent(ScorePanel);
 
     lbl(panel, 'ScoreLabel',    '0',        38, { w: 260, h: 48, x: -160, y: 38, color: '#f4d27e', bold: true, align: HorizontalTextAlignment.RIGHT });
-    lbl(panel, 'TargetLabel',   '目标 500', 19, { w: 200, h: 26, x: 120,  y: 38, color: '#888888' });
-    lbl(panel, 'HandsLabel',    '出牌 4',   19, { w: 130, h: 26, x: -270, y: 6,  color: '#88ddff' });
-    lbl(panel, 'DiscardsLabel', '弃牌 3',   19, { w: 130, h: 26, x: -120, y: 6,  color: '#ffaa44' });
-    lbl(panel, 'CoinsLabel',    '💰 0',     19, { w: 120, h: 26, x:  50,  y: 6,  color: '#f4d27e' });
+    lbl(panel, 'TargetLabel',   '目标 500', 19, { w: 200, h: 26, x:  120, y: 38, color: '#888888' });
+    lbl(panel, 'HandsLabel',    '出牌 4',   19, { w: 130, h: 26, x: -270, y:  6, color: '#88ddff' });
+    lbl(panel, 'DiscardsLabel', '弃牌 3',   19, { w: 130, h: 26, x: -120, y:  6, color: '#ffaa44' });
+    lbl(panel, 'CoinsLabel',    '💰 0',     19, { w: 120, h: 26, x:   50, y:  6, color: '#f4d27e' });
 
     // Progress bar
     const pbCont = nd('ProgressBarContainer', panel);
@@ -227,12 +257,12 @@ export class GameBootstrap extends Component {
     const pbBg = nd('ProgressBarBg', pbCont);
     sz(pbBg, 600, 14);
     anchor(pbBg, 0, 0.5);
-    pbBg.addComponent(Sprite).color = color('#333333');
+    solidSprite(pbBg, '#333333');
 
     const pbFill = nd('ProgressFill', pbCont);
     sz(pbFill, 0, 14);
     anchor(pbFill, 0, 0.5);
-    pbFill.addComponent(Sprite).color = color('#f39c12');
+    solidSprite(pbFill, '#f39c12');
 
     lbl(panel, 'RuleHintLabel',     '', 16, { w: 600, h: 22, x: 0, y: -44, color: '#ff6655', align: HorizontalTextAlignment.CENTER });
     lbl(panel, 'ScoreFormulaLabel', '', 17, { w: 600, h: 22, x: 0, y: -64, color: '#cccccc', align: HorizontalTextAlignment.CENTER });
@@ -252,9 +282,9 @@ export class GameBootstrap extends Component {
     sz(container, 710, 120);
     container.setPosition(0, -10);
     const layout = container.addComponent(Layout);
-    layout.type       = Layout.Type.HORIZONTAL;
-    layout.spacingX   = 6;
-    layout.childAlignment = 4; // CENTER (Cocos Layout alignment enum)
+    layout.type           = Layout.Type.HORIZONTAL;
+    layout.spacingX       = 6;
+    layout.childAlignment = 4; // CENTER
 
     return panel;
   }
@@ -280,7 +310,7 @@ export class GameBootstrap extends Component {
 
     const bg = nd('Bg', panel);
     sz(bg, W, H);
-    bg.addComponent(Sprite).color = color('#000000cc');
+    solidSprite(bg, '#000000cc');
 
     lbl(panel, 'TitleLabel', '选择奖励', 32, { w: 600, h: 44, x: 0, y: 300, color: '#f4d27e', bold: true, align: HorizontalTextAlignment.CENTER });
     lbl(panel, 'BonusLabel', '',          20, { w: 600, h: 28, x: 0, y: 258, color: '#ffaa44', align: HorizontalTextAlignment.CENTER });
@@ -288,21 +318,21 @@ export class GameBootstrap extends Component {
     const choiceCont = nd('ChoiceContainer', panel);
     sz(choiceCont, 690, 420);
     choiceCont.setPosition(0, 40);
-    const layout = choiceCont.addComponent(Layout);
-    layout.type    = Layout.Type.VERTICAL;
-    layout.spacingY = 10;
+    const cl = choiceCont.addComponent(Layout);
+    cl.type     = Layout.Type.VERTICAL;
+    cl.spacingY = 10;
 
     const paidCont = nd('PaidUpgradeContainer', panel);
     sz(paidCont, 690, 200);
     paidCont.setPosition(0, -210);
-    const paidLayout = paidCont.addComponent(Layout);
-    paidLayout.type    = Layout.Type.VERTICAL;
-    paidLayout.spacingY = 8;
+    const pl = paidCont.addComponent(Layout);
+    pl.type     = Layout.Type.VERTICAL;
+    pl.spacingY = 8;
     paidCont.active = false;
 
-    btn(panel, 'CatchUpBtn',    '追加奖励', 200, 56, -220, -310);
-    btn(panel, 'RefreshBtn',    '刷新(5💰)', 200, 56,   0,  -310);
-    btn(panel, 'BuyUpgradeBtn', '购买升级', 200, 56,  220,  -310);
+    btn(panel, 'CatchUpBtn',    '追加奖励',  200, 56, -220, -310);
+    btn(panel, 'RefreshBtn',    '刷新(5💰)', 200, 56,    0, -310);
+    btn(panel, 'BuyUpgradeBtn', '购买升级',  200, 56,  220, -310);
 
     return panel;
   }
@@ -315,7 +345,7 @@ export class GameBootstrap extends Component {
 
     const bg = nd('Bg', panel);
     sz(bg, W, H);
-    bg.addComponent(Sprite).color = color('#000000aa');
+    solidSprite(bg, '#000000aa');
 
     lbl(panel, 'ResultLabel', '',   52, { w: 400, h: 68, x: 0, y: 120, color: '#ffffff', bold: true, align: HorizontalTextAlignment.CENTER });
     lbl(panel, 'SubLabel',    '',   26, { w: 520, h: 36, x: 0, y:  40, color: '#cccccc', align: HorizontalTextAlignment.CENTER });
@@ -332,9 +362,9 @@ export class GameBootstrap extends Component {
 
     const bg = nd('Bg', scr);
     sz(bg, W, H);
-    bg.addComponent(Sprite).color = color('#0d0604');
+    solidSprite(bg, '#0d0604');
 
-    lbl(scr, 'Title',    '雀灵试炼',       64, { w: 520, h: 80, x: 0, y: 160, color: '#f4d27e', bold: true, align: HorizontalTextAlignment.CENTER });
+    lbl(scr, 'Title',    '雀灵试炼',         64, { w: 520, h: 80, x: 0, y: 160, color: '#f4d27e', bold: true, align: HorizontalTextAlignment.CENTER });
     lbl(scr, 'SubTitle', '以牌入道，斩妖伏魔', 26, { w: 420, h: 36, x: 0, y:  80, color: '#888888', align: HorizontalTextAlignment.CENTER });
     btn(scr, 'StartBtn', '开始游戏', 260, 76, 0, -60, '#7a3f00');
 
@@ -349,7 +379,7 @@ export class GameBootstrap extends Component {
 
     const bg = nd('Bg', scr);
     sz(bg, W, H);
-    bg.addComponent(Sprite).color = color('#0d0604e0');
+    solidSprite(bg, '#0d0604e0');
 
     lbl(scr, 'Title', '选择开局', 38, { w: 520, h: 52, x: 0, y: 290, color: '#f4d27e', bold: true, align: HorizontalTextAlignment.CENTER });
 
@@ -357,7 +387,7 @@ export class GameBootstrap extends Component {
     sz(cont, 690, 460);
     cont.setPosition(0, -30);
     const layout = cont.addComponent(Layout);
-    layout.type    = Layout.Type.VERTICAL;
+    layout.type     = Layout.Type.VERTICAL;
     layout.spacingY = 16;
 
     return scr;
@@ -370,7 +400,7 @@ export class GameBootstrap extends Component {
 
     const bg = nd('Bg', toast);
     sz(bg, 480, 62);
-    bg.addComponent(Sprite).color = color('#000000bb');
+    solidSprite(bg, '#000000bb');
 
     const l = toast.addComponent(Label);
     l.string = '';
@@ -391,8 +421,7 @@ export class GameBootstrap extends Component {
 
     const bgSp = nd('BgSprite', root);
     sz(bgSp, 76, 108);
-    const sp = bgSp.addComponent(Sprite);
-    sp.color = color('#fdf6e3');
+    const sp = solidSprite(bgSp, '#fdf6e3');
 
     const tc = root.getComponent(TileCard)!;
     tc.bgSprite = sp;
@@ -441,7 +470,7 @@ export class GameBootstrap extends Component {
 
     const bg = nd('Bg', root);
     sz(bg, 670, 86);
-    bg.addComponent(Sprite).color = color('#1e1208');
+    solidSprite(bg, '#1e1208');
 
     const nameLbl = nd('NameLabel', root);
     sz(nameLbl, 380, 34);
@@ -499,8 +528,16 @@ export class GameBootstrap extends Component {
 
 function nd(name: string, parent?: Node): Node {
   const n = new Node(name);
-  if (parent) parent.addChild(n);
+  if (parent) {
+    n.layer = parent.layer;
+    parent.addChild(n);
+  }
   return n;
+}
+
+function setLayerRecursive(node: Node, layer: number): void {
+  node.layer = layer;
+  node.children.forEach((child) => setLayerRecursive(child, layer));
 }
 
 function sz(node: Node, w: number, h: number): UITransform {
@@ -541,7 +578,7 @@ function btn(parent: Node, name: string, text: string, w: number, h: number, x: 
 
   const bg = nd('Bg', n);
   sz(bg, w, h);
-  bg.addComponent(Sprite).color = color(bgColor);
+  solidSprite(bg, bgColor);
 
   const lblN = nd('Text', n);
   sz(lblN, w - 12, h);
@@ -557,4 +594,34 @@ function btn(parent: Node, name: string, text: string, w: number, h: number, x: 
 
 function tap(node: Node | null, fn: () => void): void {
   node?.on(Node.EventType.TOUCH_END, fn);
+}
+
+// ── Sprite helpers ────────────────────────────────────────────────────────────
+
+// Lazy-initialized 1×1 white SpriteFrame shared by all solid-color sprites.
+// In Cocos 3.x, Sprite.spriteFrame must be non-null for the sprite to render.
+let _whiteSF: SpriteFrame | null = null;
+function whiteSF(): SpriteFrame {
+  if (!_whiteSF) {
+    const builtin = builtinResMgr.get<SpriteFrame>('default-spriteframe');
+    if (builtin) {
+      _whiteSF = builtin;
+      return _whiteSF;
+    }
+
+    const tex = new Texture2D();
+    tex.reset({ width: 1, height: 1, format: Texture2D.PixelFormat.RGBA8888 });
+    tex.uploadData(new Uint8Array([255, 255, 255, 255]));
+    const sf = new SpriteFrame();
+    sf.texture = tex;
+    _whiteSF = sf;
+  }
+  return _whiteSF;
+}
+
+function solidSprite(node: Node, hexColor: string): Sprite {
+  const sp = node.addComponent(Sprite);
+  sp.spriteFrame = whiteSF();
+  sp.color = color(hexColor);
+  return sp;
 }

@@ -114,17 +114,29 @@ export class BossPanel extends Component {
     this._loadedBossIdx = stageIdx;
     const src = BOSS_IMG_SRCS[stageIdx];
     if (!src || !this.bossPortrait) return;
-    // Strip "assets/" prefix — Cocos resources() looks inside assets/resources/
-    const resPath = src.replace(/^assets\//, '').replace(/\.(jpg|png)$/, '');
-    resources.load(resPath, SpriteFrame, (err, sf) => {
-      if (err || !sf) {
-        console.warn(`Boss portrait not found: ${resPath}`, err);
+    const basePath = src.replace(/^assets\/resources\//, '').replace(/\.(jpg|png|jpeg)$/, '');
+    const spriteFramePath = `${basePath}/spriteFrame`;
+    resources.load(spriteFramePath, SpriteFrame, (sfErr, sf) => {
+      if (sf) {
+        this._applyBossSprite(stageIdx, sf);
         return;
       }
-      if (this.bossPortrait && this._loadedBossIdx === stageIdx) {
-        this.bossPortrait.spriteFrame = sf;
-      }
+      resources.load(`${basePath}/texture`, Texture2D, (texErr, texture) => {
+        if (!texture) {
+          console.warn(`Boss portrait not found: ${spriteFramePath}`, sfErr || texErr);
+          return;
+        }
+        const generated = new SpriteFrame();
+        generated.texture = texture;
+        this._applyBossSprite(stageIdx, generated);
+      });
     });
+  }
+
+  private _applyBossSprite(stageIdx: number, sf: SpriteFrame): void {
+    if (this.bossPortrait && this._loadedBossIdx === stageIdx) {
+      this.bossPortrait.spriteFrame = sf;
+    }
   }
 
   private _shakePanel(tier: number): void {

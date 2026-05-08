@@ -69,7 +69,7 @@ export class RewardPanel extends Component {
   }
 
   private _syncCards(items: any[], onChoose: (item: any, idx: number) => void): void {
-    if (!this.choiceContainer || !this.choiceCardPrefab) return;
+    if (!this.choiceContainer || (!this.choiceCardPrefab && !this.nodeFactory)) return;
 
     // Add missing card nodes
     while (this._choiceNodes.length < items.length) {

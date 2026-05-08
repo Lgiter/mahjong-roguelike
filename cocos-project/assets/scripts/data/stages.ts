@@ -31,9 +31,18 @@ export const STAGE_THEMES: StageTheme[] = [
 ];
 
 export const BOSS_IMG_SRCS: (string | null)[] = [
-  'assets/bosses/stage0.jpg',
-  null, null, null, null, null,
-  null, null, null, null, null, null,
+  'assets/resources/bosses/stage0.jpg',
+  'assets/resources/bosses/stage1.png',
+  'assets/resources/bosses/stage2.png',
+  'assets/resources/bosses/stage3.png',
+  'assets/resources/bosses/stage4.png',
+  'assets/resources/bosses/stage5.png',
+  'assets/resources/bosses/stage6.png',
+  'assets/resources/bosses/stage7.png',
+  'assets/resources/bosses/stage8.png',
+  'assets/resources/bosses/stage9.png',
+  'assets/resources/bosses/stage10.png',
+  'assets/resources/bosses/stage11.png',
 ];
 
 export const HAND_RANKS: [string, number, number][] = [

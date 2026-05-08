@@ -23,6 +23,9 @@ const COLORS = {
   ink: "#16120c",
 };
 
+const RUN_SAVE_KEY = "mahjong_roguelike_run_save_v1";
+const RUN_SAVE_VERSION = 1;
+
 const WIND_NAMES = ["东", "南", "西", "北"];
 const DRAGON_NAMES = ["中", "发", "白"];
 const SUIT_LABELS = { wan: "万", tong: "筒", tiao: "条", wind: "风", dragon: "元" };
@@ -46,9 +49,9 @@ const STAGES = [
   { target: 3600, hands: 4, discards: 3, enemy: "断门鬼", boss: true, rule: { id: "noWan", text: "Boss：万字牌不提供基础点" } },
   { target: 6800, hands: 4, discards: 3, enemy: "石面将" },
   { target: 12500, hands: 4, discards: 3, enemy: "白风客" },
-  { target: 23000, hands: 4, discards: 2, enemy: "封顺魇", boss: true, rule: { id: "straightHalf", text: "Boss：顺子和两顺番数减半" } },
+  { target: 23000, hands: 4, discards: 2, enemy: "封顺魇", boss: true, rule: { id: "straightHalf", text: "Boss：普通顺子番数减半，连四和五张顺子不受影响" } },
   { target: 42000, hands: 4, discards: 3, enemy: "金铃童子" },
-  { target: 68000, hands: 4, discards: 2, enemy: "三元使", boss: true, rule: { id: "noDragon", text: "Boss：三元牌基础点被压制" } },
+  { target: 68000, hands: 4, discards: 2, enemy: "三元使", boss: true, rule: { id: "noDragon", text: "Boss：三元牌基础点被压制，每张 -30" } },
   { target: 115000, hands: 4, discards: 3, enemy: "黑风客" },
   { target: 190000, hands: 4, discards: 2, enemy: "铁算盘", boss: true, rule: { id: "coinBleed", text: "Boss：每次出牌后金币 -2" } },
   { target: 320000, hands: 4, discards: 2, enemy: "三元龙王", boss: true },
@@ -123,15 +126,15 @@ const ARTIFACTS = [
       recordDeckChange("青龙印：牌山加入 2 张中张，清理 1 张字牌");
     },
   }),
-  artifact("whiteTiger", "白虎符", "虎", "刻子系点数 +80；五张刻子终局额外 ×1.5；过关时复制对子牌。", (c) => {
+  artifact("whiteTiger", "白虎符", "虎", "刻子系点数 +80；五张刻子终局额外 ×1.25；刻子成长降低；过关时复制对子牌。", (c) => {
     if (hasTag(c, "triplet")) {
       c.base += 80 + c.state.growth.tripletBase;
-      if (isBigTripletCombo(c.combo)) c.factor *= 1.5;
+      if (isBigTripletCombo(c.combo)) c.factor *= 1.25;
     }
   }, {
     lane: "刻子",
     afterPlay(s, combo) {
-      if (combo.tags.includes("triplet")) s.growth.tripletBase += isBigTripletCombo(combo) ? 80 : 50;
+      if (combo.tags.includes("triplet")) s.growth.tripletBase += isBigTripletCombo(combo) ? 60 : 35;
     },
     stageClear(s) {
       const source = findPairSource([...s.hand, ...s.deck, ...s.discard]) || sample([...s.hand, ...s.deck]);
@@ -154,8 +157,8 @@ const ARTIFACTS = [
   artifact("loopScript", "连环诀", "环", "连续打出顺子时最终得分 ×2.2。", (c, s) => {
     if (hasTag(c, "straight") && s.lastComboTags.includes("straight")) c.factor *= 2.2;
   }, { lane: "顺子" }),
-  artifact("twinHammer", "双锤令", "锤", "刻子系终局重击：普通刻子 ×2，五张刻子终局 ×2.4。", (c) => {
-    if (hasTag(c, "triplet")) c.factor *= isBigTripletCombo(c.combo) ? 2.4 : 2;
+  artifact("twinHammer", "双锤令", "锤", "刻子系终局重击：刻子系最终得分 ×2。", (c) => {
+    if (hasTag(c, "triplet")) c.factor *= 2;
   }, { lane: "刻子" }),
   artifact("goldVault", "聚宝匣", "宝", "过关时金币越多，金币流成长越高。", (c, s) => {
     c.mult += s.growth.wealthFan;
@@ -180,7 +183,7 @@ const ARTIFACTS = [
   }, { lane: "清一色" }),
   artifact("pairNeedle", "鸳鸯针", "双", "对子系番数 +4；牌山对子越多额外越高；两对额外 ×1.6。", (c) => {
     if (hasTag(c, "pair")) {
-      c.mult += 4 + Math.floor(deckPairPotential() / 6);
+      c.mult += 4 + Math.floor(deckPairPotential() / 10);
       if (c.combo.name === "两对") c.factor *= 1.6;
     }
   }, { lane: "对子" }),
@@ -397,6 +400,7 @@ const state = {
   lastCombo: "",
   lastComboTags: [],
   stageComboCounts: {},
+  stageSupportLaneCounts: {},
   stageBestScore: 0,
   stageTotalScore: 0,
   stagePlays: 0,
@@ -428,6 +432,7 @@ const state = {
   showStageSelect: false,
   showHandHelp: false,
   showGuide: false,
+  hasSave: false,
   resolve: null,
   adPrompt: null,
   adsUsed: { hand: 0, discard: 0, refresh: 0, revive: 0 },
@@ -445,8 +450,194 @@ wx.onTouchStart((event) => {
   if (hit) hit.onTap();
 });
 
+wx.onHide(() => {
+  saveRun();
+});
+
+wx.onShow(() => {
+  state.hasSave = hasRunSave();
+});
+
+function activeRunScreen() {
+  return ["game", "reward", "replace"].includes(state.screen);
+}
+
+function hasRunSave() {
+  try {
+    const save = wx.getStorageSync(RUN_SAVE_KEY);
+    return !!save && save.version === RUN_SAVE_VERSION;
+  } catch (error) {
+    return false;
+  }
+}
+
+function saveRun() {
+  if (!activeRunScreen()) return;
+  try {
+    wx.setStorageSync(RUN_SAVE_KEY, createRunSave());
+    state.hasSave = true;
+  } catch (error) {
+    toast("存档失败，请检查本地存储空间");
+  }
+}
+
+function clearRunSave() {
+  try {
+    wx.removeStorageSync(RUN_SAVE_KEY);
+  } catch (error) {
+    // 本地清档失败不影响新局或结算流程。
+  }
+  state.hasSave = false;
+}
+
+function continueSavedRun() {
+  const save = loadRunSave();
+  if (!save) return toast("没有可继续的存档");
+  restoreRunSave(save);
+  toast("已继续上次试炼");
+}
+
+function loadRunSave() {
+  try {
+    const save = wx.getStorageSync(RUN_SAVE_KEY);
+    if (!save || save.version !== RUN_SAVE_VERSION) return null;
+    return save;
+  } catch (error) {
+    return null;
+  }
+}
+
+function createRunSave() {
+  return {
+    version: RUN_SAVE_VERSION,
+    screen: activeRunScreen() ? state.screen : "game",
+    stageIndex: state.stageIndex,
+    score: state.score,
+    coins: state.coins,
+    handsLeft: state.handsLeft,
+    discardsLeft: state.discardsLeft,
+    hand: state.hand,
+    deck: state.deck,
+    discard: state.discard,
+    selectedIds: [...state.selected],
+    artifactIds: state.artifacts.map((artifactItem) => artifactItem.id),
+    artifactSlots: state.artifactSlots,
+    pendingArtifactId: state.pendingArtifact?.id || "",
+    upgrades: state.upgrades,
+    upgradeFlags: state.upgradeFlags,
+    upgradeUses: state.upgradeUses,
+    growth: state.growth,
+    nextHandBonus: state.nextHandBonus,
+    targetMultiplier: state.targetMultiplier,
+    nextTargetPenalty: state.nextTargetPenalty,
+    luckUsed: state.luckUsed,
+    lastCombo: state.lastCombo,
+    lastComboTags: state.lastComboTags,
+    stageComboCounts: state.stageComboCounts,
+    stageSupportLaneCounts: state.stageSupportLaneCounts,
+    stageBestScore: state.stageBestScore,
+    stageTotalScore: state.stageTotalScore,
+    stagePlays: state.stagePlays,
+    stageSummary: state.stageSummary,
+    lastStageLane: state.lastStageLane,
+    laneMisses: state.laneMisses,
+    stageEventId: state.stageEvent?.id || "",
+    stageEventFirstHandUsed: state.stageEventFirstHandUsed,
+    catchUpAvailable: state.catchUpAvailable,
+    finalPrepAvailable: state.finalPrepAvailable,
+    targetAssistNext: state.targetAssistNext,
+    deckChanges: state.deckChanges,
+    log: state.log,
+    lastTriggeredArtifacts: state.lastTriggeredArtifacts,
+    rewardChoices: state.rewardChoices.map(serializeRewardChoice),
+    paidUpgradeChoices: state.paidUpgradeChoices.map(serializeRewardChoice),
+    rewardBonus: state.rewardBonus || 0,
+    boughtUpgradeThisReward: state.boughtUpgradeThisReward,
+    startLane: state.startLane,
+    debugMode: state.debugMode,
+    adsUsed: state.adsUsed,
+    runCount: state.runCount,
+  };
+}
+
+function restoreRunSave(save) {
+  state.screen = ["game", "reward", "replace"].includes(save.screen) ? save.screen : "game";
+  state.stageIndex = Math.min(Math.max(0, save.stageIndex || 0), STAGES.length - 1);
+  state.score = save.score || 0;
+  state.coins = save.coins || 0;
+  state.handsLeft = save.handsLeft || 0;
+  state.discardsLeft = save.discardsLeft || 0;
+  state.hand = save.hand || [];
+  state.deck = save.deck || [];
+  state.discard = save.discard || [];
+  const handIds = new Set(state.hand.map((tile) => tile.id));
+  state.selected = new Set((save.selectedIds || []).filter((id) => handIds.has(id)));
+  state.artifacts = (save.artifactIds || []).map(getArtifact).filter(Boolean);
+  state.artifactSlots = save.artifactSlots || 5;
+  state.pendingArtifact = save.pendingArtifactId ? getArtifact(save.pendingArtifactId) : null;
+  if (state.screen === "replace" && !state.pendingArtifact) state.screen = "reward";
+  state.upgrades = { straightBase: 0, tripletBase: 0, flushMult: 0, ...(save.upgrades || {}) };
+  state.upgradeFlags = { straightFirstBurst: false, tripletEcho: false, flushFirstFan: false, ...(save.upgradeFlags || {}) };
+  state.upgradeUses = { straightFirstBurstUsed: false, flushFirstFanUsed: false, ...(save.upgradeUses || {}) };
+  state.growth = { straightFan: 0, tripletBase: 0, wealthFan: 0, looseFan: 0, looseBase: 0, highFactor: 0, ...(save.growth || {}) };
+  state.nextHandBonus = save.nextHandBonus || 0;
+  state.targetMultiplier = save.targetMultiplier || 1;
+  state.nextTargetPenalty = save.nextTargetPenalty || 0;
+  state.luckUsed = !!save.luckUsed;
+  state.lastCombo = save.lastCombo || "";
+  state.lastComboTags = save.lastComboTags || [];
+  state.stageComboCounts = save.stageComboCounts || {};
+  state.stageSupportLaneCounts = save.stageSupportLaneCounts || {};
+  state.stageBestScore = save.stageBestScore || 0;
+  state.stageTotalScore = save.stageTotalScore || 0;
+  state.stagePlays = save.stagePlays || 0;
+  state.stageSummary = save.stageSummary || null;
+  state.lastStageLane = save.lastStageLane || "";
+  state.laneMisses = save.laneMisses || {};
+  state.stageEvent = save.stageEventId ? STAGE_EVENTS.find((eventItem) => eventItem.id === save.stageEventId) || null : null;
+  state.stageEventFirstHandUsed = !!save.stageEventFirstHandUsed;
+  state.catchUpAvailable = !!save.catchUpAvailable;
+  state.finalPrepAvailable = !!save.finalPrepAvailable;
+  state.targetAssistNext = save.targetAssistNext || 0;
+  state.deckChanges = save.deckChanges || [];
+  state.log = save.log || [];
+  state.lastTriggeredArtifacts = save.lastTriggeredArtifacts || [];
+  state.rewardChoices = (save.rewardChoices || []).map(deserializeRewardChoice).filter(Boolean);
+  state.paidUpgradeChoices = (save.paidUpgradeChoices || []).map(deserializeRewardChoice).filter(Boolean);
+  state.rewardBonus = save.rewardBonus || 0;
+  state.boughtUpgradeThisReward = !!save.boughtUpgradeThisReward;
+  state.startLane = save.startLane || "通用";
+  state.debugMode = !!save.debugMode;
+  state.adsUsed = { hand: 0, discard: 0, refresh: 0, revive: 0, ...(save.adsUsed || {}) };
+  state.runCount = save.runCount || state.runCount;
+  state.enemyFx = null;
+  state.resolve = null;
+  state.adPrompt = null;
+  state.inspectedArtifact = null;
+  state.showStageSelect = false;
+  state.showDealDebug = false;
+  state.showGuide = false;
+  state.showHandHelp = false;
+  state.hasSave = true;
+}
+
+function serializeRewardChoice(choice) {
+  if (choice.artifact) return { kind: "artifact", id: choice.artifact.id };
+  return { kind: "upgrade", id: choice.id };
+}
+
+function deserializeRewardChoice(ref) {
+  if (!ref || !ref.id) return null;
+  if (ref.kind === "artifact") {
+    const artifactItem = getArtifact(ref.id);
+    return artifactItem ? artifactReward(artifactItem) : null;
+  }
+  return UPGRADES.find((upgrade) => upgrade.id === ref.id) || null;
+}
+
 function startRun(startIndex = 0, debugMode = false, startBuild = START_BUILDS[0]) {
   preloadBossImages();
+  clearRunSave();
   state.screen = "game";
   state.stageIndex = startIndex;
   state.debugMode = debugMode;
@@ -474,6 +665,7 @@ function startRun(startIndex = 0, debugMode = false, startBuild = START_BUILDS[0
   state.lastCombo = "";
   state.lastComboTags = [];
   state.stageComboCounts = {};
+  state.stageSupportLaneCounts = {};
   state.stageBestScore = 0;
   state.stageTotalScore = 0;
   state.stagePlays = 0;
@@ -527,6 +719,7 @@ function beginStage() {
     else if (state.stageEvent.id === "brief") { state.handsLeft = Math.max(1, state.handsLeft - 1); state.discardsLeft += 2; }
   }
   state.stageComboCounts = {};
+  state.stageSupportLaneCounts = {};
   state.stageBestScore = 0;
   state.stageTotalScore = 0;
   state.stagePlays = 0;
@@ -539,6 +732,7 @@ function beginStage() {
   trimHandToLimit();
   const stageToast = stage.boss ? stage.rule.text : `${stage.enemy} 出现`;
   toast(state.stageEvent ? `${stageToast}  ·  ${state.stageEvent.text}` : stageToast);
+  saveRun();
 }
 
 function playSelected() {
@@ -575,6 +769,7 @@ function playSelected() {
   const stage = currentStage();
   if (state.score >= stageTarget()) setTimeout(completeStage, 250);
   else if (state.handsLeft <= 0) setTimeout(() => endRun(false), 250);
+  else saveRun();
 }
 
 function discardSelected() {
@@ -583,6 +778,7 @@ function discardSelected() {
   state.discardsLeft -= 1;
   moveSelectedToDiscard();
   refillHand();
+  saveRun();
 }
 
 function triggerEnemyFx(combo, total, prevScore) {
@@ -670,6 +866,7 @@ function buyDiscardWithCoins() {
   if (state.coins < 3) return toast("金币不足：补换牌需要 3 金币");
   state.coins -= 3;
   state.discardsLeft += 1;
+  saveRun();
   toast("花费 3 金币补 1 次换牌");
 }
 
@@ -699,6 +896,7 @@ function openReward(bonus) {
   state.boughtUpgradeThisReward = false;
   state.paidUpgradeChoices = [];
   state.screen = "reward";
+  saveRun();
 }
 
 function createRewardChoices() {
@@ -720,6 +918,7 @@ function refreshRewardsWithCoins() {
   if (state.coins < 3) return toast("金币不足：刷新需要 3 金币");
   state.coins -= 3;
   state.rewardChoices = createRewardChoices();
+  saveRun();
   toast("花费 3 金币刷新奖励");
 }
 
@@ -728,6 +927,7 @@ function buyDeckUpgradeWithCoins() {
   if (state.boughtUpgradeThisReward) return toast("本次奖励已购买过改造");
   if (state.coins < 5) return toast("金币不足：改造需要 5 金币");
   state.paidUpgradeChoices = weightedRewardChoices(UPGRADES.filter((item) => item.type === "牌山改造"), 2);
+  saveRun();
   toast("选择 1 项牌山改造");
 }
 
@@ -739,6 +939,7 @@ function choosePaidDeckUpgrade(upgrade) {
   state.paidUpgradeChoices = [];
   upgrade.choose(state);
   recordDeckChange(`花费 5 金币购买：${upgrade.name}`);
+  saveRun();
   toast(`获得牌山改造：${upgrade.name}`);
 }
 
@@ -752,6 +953,7 @@ function takeCatchUpReward() {
   state.nextHandBonus += finalPrep ? 1 : 0;
   applyLaneDeckAssist(lane, finalPrep);
   recordDeckChange(`${finalPrep ? "终局强化" : "天命改造"}：补强${lane}流，下一关目标降低`);
+  saveRun();
   toast(finalPrep ? "终局强化完成" : "天命改造完成");
 }
 
@@ -762,6 +964,7 @@ function chooseArtifact(artifactItem) {
   }
   state.pendingArtifact = artifactItem;
   state.screen = "replace";
+  saveRun();
 }
 
 function replaceArtifact(index) {
@@ -782,6 +985,7 @@ function maybeGrantArtifactSlot() {
 }
 
 function endRun(win) {
+  clearRunSave();
   state.screen = "end";
   state.win = win;
 }
@@ -798,6 +1002,7 @@ function finishAdPrompt() {
   const prompt = state.adPrompt;
   state.adPrompt = null;
   prompt.onDone();
+  saveRun();
   toast("模拟广告完成");
 }
 
@@ -844,6 +1049,7 @@ function borrowLuck() {
   state.handsLeft += 1;
   state.discardsLeft += 1;
   state.nextTargetPenalty += 0.1;
+  saveRun();
   toast("借运：本关出牌和换牌 +1，下关目标 +10%");
 }
 
@@ -856,18 +1062,18 @@ function mixedRewards() {
 
 function weightedRewardChoices(pool, count) {
   const picked = [];
-  const preferred = preferredLanes();
+  const preferred = rewardLanePreferences();
   const remaining = [...pool];
-  const preferredPool = remaining.filter((item) => preferred.includes(item.lane));
+  const preferredPool = remaining.filter((item) => rewardLaneWeight(item, preferred) > 1);
   if (preferredPool.length) {
-    const first = sample(preferredPool);
+    const first = weightedRewardSample(preferredPool, preferred);
     picked.push(first);
     remaining.splice(remaining.findIndex((item) => item.id === first.id), 1);
   }
   while (picked.length < count && remaining.length) {
     const weighted = [];
     remaining.forEach((item) => {
-      const weight = preferred.includes(item.lane) ? 4 : 1;
+      const weight = rewardLaneWeight(item, preferred);
       for (let i = 0; i < weight; i += 1) weighted.push(item);
     });
     const choice = sample(weighted);
@@ -877,11 +1083,39 @@ function weightedRewardChoices(pool, count) {
   return picked;
 }
 
+function weightedRewardSample(pool, preferred) {
+  const weighted = [];
+  pool.forEach((item) => {
+    const weight = rewardLaneWeight(item, preferred);
+    for (let i = 0; i < weight; i += 1) weighted.push(item);
+  });
+  return sample(weighted);
+}
+
+function rewardLaneWeight(item, preferred) {
+  if (preferred.primary.includes(item.lane)) return 4;
+  if (preferred.support.includes(item.lane)) return 2;
+  return 1;
+}
+
+function rewardLanePreferences() {
+  const primary = preferredLanes();
+  const support = supportPreferredLanes().filter((lane) => !primary.includes(lane));
+  return { primary, support };
+}
+
 function preferredLanes() {
   const lanes = state.artifacts.map((artifactItem) => artifactItem.lane).filter((lane) => lane && lane !== "通用");
   if (state.lastStageLane) lanes.push(state.lastStageLane);
   if (state.lastStageLane === "散牌" || state.lastStageLane === "高牌") lanes.push("五张", "通用");
   return [...new Set(lanes)];
+}
+
+function supportPreferredLanes() {
+  return Object.entries(state.stageSupportLaneCounts)
+    .filter((entry) => entry[1] > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map((entry) => entry[0]);
 }
 
 function artifactReward(artifactItem) {
@@ -1188,9 +1422,18 @@ function isBigStraightCombo(combo) {
   return combo.name === "清一色两顺";
 }
 
+function isBasicStraightCombo(combo) {
+  return combo.tags.includes("straight") && combo.base === 58 && combo.mult === 3;
+}
+
 function recordComboLane(combo) {
   const lane = laneForCombo(combo);
   state.stageComboCounts[lane] = (state.stageComboCounts[lane] || 0) + 1;
+  supportLanesForCombo(combo)
+    .filter((supportLane) => supportLane !== lane)
+    .forEach((supportLane) => {
+      state.stageSupportLaneCounts[supportLane] = (state.stageSupportLaneCounts[supportLane] || 0) + 1;
+    });
 }
 
 function laneForCombo(combo) {
@@ -1202,6 +1445,18 @@ function laneForCombo(combo) {
   if (combo.tags.includes("high")) return "高牌";
   if (combo.tags.includes("loose")) return "散牌";
   return "通用";
+}
+
+function supportLanesForCombo(combo) {
+  const lanes = [];
+  if (combo.tags.includes("straight")) lanes.push("顺子");
+  if (combo.tags.includes("triplet")) lanes.push("刻子");
+  if (combo.tags.includes("flush")) lanes.push("清一色");
+  if (combo.tags.includes("dragon")) lanes.push("字牌");
+  if (combo.tags.includes("pair")) lanes.push("对子");
+  if (combo.tags.includes("high")) lanes.push("高牌");
+  if (combo.tags.includes("loose")) lanes.push("散牌");
+  return [...new Set(lanes)];
 }
 
 function dominantStageLane() {
@@ -1333,8 +1588,8 @@ function calculateScore(tiles, combo) {
   }
   const rule = currentStage().rule;
   if (rule && rule.id === "noWan") addBase(c, -countSuit(tiles, "wan") * 18, "Boss 断门");
-  if (rule && rule.id === "noDragon") addBase(c, -countSuit(tiles, "dragon") * 45, "Boss 压元");
-  if (rule && rule.id === "straightHalf" && combo.tags.includes("straight")) {
+  if (rule && rule.id === "noDragon") addBase(c, -countSuit(tiles, "dragon") * 30, "Boss 压元");
+  if (rule && rule.id === "straightHalf" && isBasicStraightCombo(combo)) {
     c.mult *= 0.5;
     c.log.push("Boss 封顺：番数 ×0.5");
   }
@@ -1381,8 +1636,14 @@ function drawStart() {
   strokeRound(W / 2 - 42, H * 0.23 - 54, 84, 84, 8, COLORS.gold);
   text("雀灵试炼", W / 2, H * 0.39, 38, COLORS.text, "center", "bold");
   text("麻将牌型肉鸽 · 点数 × 番数 · 法器构筑", W / 2, H * 0.44, 14, COLORS.muted, "center");
-  button(W * 0.12, H * 0.66, W * 0.76, 54, "开始试炼", openBuildSelect, true);
-  button(W * 0.12, H * 0.76, W * 0.76, 48, "调试选关", () => { state.showStageSelect = true; }, false);
+  if (state.hasSave) {
+    button(W * 0.12, H * 0.58, W * 0.76, 52, "继续试炼", continueSavedRun, true);
+    button(W * 0.12, H * 0.69, W * 0.76, 48, "开始试炼", openBuildSelect, false);
+    button(W * 0.12, H * 0.79, W * 0.76, 44, "调试选关", () => { state.showStageSelect = true; }, false);
+  } else {
+    button(W * 0.12, H * 0.66, W * 0.76, 54, "开始试炼", openBuildSelect, true);
+    button(W * 0.12, H * 0.76, W * 0.76, 48, "调试选关", () => { state.showStageSelect = true; }, false);
+  }
 }
 
 function openBuildSelect() {
@@ -1960,7 +2221,7 @@ function drawPaidUpgradeChoices(y, compact) {
   state.paidUpgradeChoices.forEach((choice, i) => {
     drawRewardChoice(choice, 18, y + 20 + i * (compact ? 88 : 104), W - 36, compact ? 76 : 92, choosePaidDeckUpgrade);
   });
-  button(18, H - (compact ? 58 : 72), W - 36, compact ? 40 : 48, "暂不购买", () => { state.paidUpgradeChoices = []; }, false);
+  button(18, H - (compact ? 58 : 72), W - 36, compact ? 40 : 48, "暂不购买", () => { state.paidUpgradeChoices = []; saveRun(); }, false);
 }
 
 function drawRewardChoice(choice, x, y, w, h, onChoose = chooseReward) {
@@ -2115,7 +2376,7 @@ function currentRuleHint(combo) {
 function currentRuleRisk(combo) {
   const rule = currentStage().rule;
   if (!rule || !combo) return false;
-  if (rule.id === "straightHalf" && combo.tags.includes("straight")) return true;
+  if (rule.id === "straightHalf" && isBasicStraightCombo(combo)) return true;
   if (rule.id === "repeatTax" && state.lastCombo === combo.name) return true;
   if (rule.id === "noWan" && selectedTiles().some((tile) => tile.suit === "wan")) return true;
   if (rule.id === "noDragon" && selectedTiles().some((tile) => tile.suit === "dragon")) return true;
@@ -2493,6 +2754,8 @@ function toast(message) {
   state.toast = message;
   state.toastUntil = Date.now() + 1500;
 }
+
+state.hasSave = hasRunSave();
 
 requestAnimationFrame(function loop(time) {
   if (time - lastFrame > 16) lastFrame = time;

@@ -55,7 +55,7 @@ export class GameManager extends Component {
     on('stateChange', this._boundOnStateChange);
     on('toast',       this._boundOnToast);
     on('scoreAnim',   this._boundOnScoreAnim);
-    this._renderAll();
+    this.scheduleOnce(() => this._renderAll(), 0);
   }
 
   onDestroy(): void {

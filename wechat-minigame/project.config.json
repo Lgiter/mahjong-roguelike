@@ -1,5 +1,5 @@
 {
-  "appid": "wx6b86252455f70120",
+  "appid": "wx6ac3f5090a6b99c5",
   "projectname": "雀灵试炼",
   "compileType": "game",
   "libVersion": "3.8.8",
@@ -34,6 +34,6 @@
     "ignore": [],
     "include": []
   },
-  "isGameTourist": false,
+  "isGameTourist": true,
   "editorSetting": {}
 }
